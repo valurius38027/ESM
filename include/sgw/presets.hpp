@@ -14,6 +14,10 @@ enum class ExperimentCondition {
   sgw_redundant_final_only,
   sgw_broadcast_forced_final_only,
   sgw_broadcast_forced_aux_annealed,
+  core_full_content,
+  core_content_blind,
+  mediation_final_only,
+  mediation_aux_annealed,
 };
 
 enum class ModelPreset {
@@ -22,6 +26,9 @@ enum class ModelPreset {
   core_param_matched,
   sgw_redundant,
   sgw_broadcast_forced,
+  core_full_content,
+  core_content_blind,
+  mediation_fixed,
   sgw = sgw_redundant,
 };
 

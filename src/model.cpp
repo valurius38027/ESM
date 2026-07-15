@@ -134,6 +134,10 @@ std::string_view forward_intervention_name(
       return "no_mechanism_output";
     case ForwardIntervention::workspace_disconnected:
       return "workspace_disconnected";
+    case ForwardIntervention::no_workspace_writes:
+      return "no_workspace_writes";
+    case ForwardIntervention::zero_reader_inbox:
+      return "zero_reader_inbox";
     case ForwardIntervention::permuted_recipients:
       return "permuted_recipients";
   }
@@ -158,22 +162,36 @@ std::size_t estimated_step_madds(const ModelConfig& config) {
   const std::size_t q = config.workspace_writers;
   const std::size_t c = config.output_classes;
 
-  std::size_t total = s * (e + s);
+  std::size_t total = s * s;
+  if (config.spine_reads_embedding) {
+    total += s * e;
+  }
   if (config.core_only) {
-    return total + c * s;
+    if (config.output_reads_spine) {
+      total += c * s;
+    }
+    return total;
   }
   if (config.spine_reads_workspace) {
     total += s * w;
   }
-  total += m * (e + s + w + d);
+  if (!config.fixed_binding_mediation) {
+    total += m * (e + s + w + d);
+  }
   total += k * d * (e + s + d + w);
   total += k * w * d;
-  total += k * w;
-  total += q * b * w;
+  if (!config.fixed_binding_mediation) {
+    total += k * w;
+    total += q * b * w;
+  }
   total += q * (2 * w * w + 2 * w);
-  total += m * w;
+  if (!config.fixed_binding_mediation) {
+    total += m * w;
+  }
   total += w * w;
-  total += c * s;
+  if (config.output_reads_spine) {
+    total += c * s;
+  }
   if (config.output_reads_workspace) {
     total += c * w;
   }
@@ -195,28 +213,38 @@ SgwEsmModel::SgwEsmModel(ModelConfig config, std::uint64_t seed)
   const std::size_t w = config_.workspace_dim;
   const std::size_t c = config_.output_classes;
 
-  embedding_ =
-      &parameters_.add_xavier("embedding", config_.vocab_size, e, generator);
-  spine_input_ = &parameters_.add_xavier("spine_input", s, e, generator);
+  if (config_.spine_reads_embedding || !config_.core_only) {
+    embedding_ =
+        &parameters_.add_xavier("embedding", config_.vocab_size, e, generator);
+  }
+  if (config_.spine_reads_embedding ||
+      (!config_.core_only && !config_.fixed_binding_mediation)) {
+    spine_input_ = &parameters_.add_xavier("spine_input", s, e, generator);
+  }
   spine_recurrent_ =
       &parameters_.add_xavier("spine_recurrent", s, s, generator);
   spine_bias_ = &parameters_.add_zeros("spine_bias", s, 1);
-  output_spine_ = &parameters_.add_xavier("output_spine", c, s, generator);
+  if (config_.output_reads_spine ||
+      (!config_.core_only && !config_.fixed_binding_mediation)) {
+    output_spine_ = &parameters_.add_xavier("output_spine", c, s, generator);
+  }
   output_bias_ = &parameters_.add_zeros("output_bias", c, 1);
 
   if (!config_.core_only) {
     spine_workspace_ =
         &parameters_.add_xavier("spine_workspace", s, w, generator);
 
-    router_embedding_ =
-        &parameters_.add_xavier("router_embedding", m, e, generator);
-    router_spine_ =
-        &parameters_.add_xavier("router_spine", m, s, generator);
-    router_workspace_ =
-        &parameters_.add_xavier("router_workspace", m, w, generator);
-    router_state_ =
-        &parameters_.add_xavier("router_state", m, d, generator);
-    router_bias_ = &parameters_.add_zeros("router_bias", m, 1);
+    if (!config_.fixed_binding_mediation) {
+      router_embedding_ =
+          &parameters_.add_xavier("router_embedding", m, e, generator);
+      router_spine_ =
+          &parameters_.add_xavier("router_spine", m, s, generator);
+      router_workspace_ =
+          &parameters_.add_xavier("router_workspace", m, w, generator);
+      router_state_ =
+          &parameters_.add_xavier("router_state", m, d, generator);
+      router_bias_ = &parameters_.add_zeros("router_bias", m, 1);
+    }
 
     mechanism_embedding_ =
         &parameters_.add_xavier("mechanism_embedding", m * d, e, generator);
@@ -231,9 +259,11 @@ SgwEsmModel::SgwEsmModel(ModelConfig config, std::uint64_t seed)
     message_state_ =
         &parameters_.add_xavier("message_state", m * w, d, generator);
     message_bias_ = &parameters_.add_zeros("message_bias", m, w);
-    writer_key_ = &parameters_.add_xavier("writer_key", m, w, generator);
-    writer_bias_ = &parameters_.add_zeros("writer_bias", m, 1);
-    slot_key_ = &parameters_.add_xavier("slot_key", b, w, generator);
+    if (!config_.fixed_binding_mediation) {
+      writer_key_ = &parameters_.add_xavier("writer_key", m, w, generator);
+      writer_bias_ = &parameters_.add_zeros("writer_bias", m, 1);
+      slot_key_ = &parameters_.add_xavier("slot_key", b, w, generator);
+    }
 
     workspace_message_ =
         &parameters_.add_xavier("workspace_message", w, w, generator);
@@ -247,17 +277,21 @@ SgwEsmModel::SgwEsmModel(ModelConfig config, std::uint64_t seed)
     workspace_gate_bias_ =
         &parameters_.add_zeros("workspace_gate_bias", 1, 1);
 
-    recipient_key_ =
-        &parameters_.add_xavier("recipient_key", m, w, generator);
-    recipient_bias_ = &parameters_.add_zeros("recipient_bias", m, w);
+    if (!config_.fixed_binding_mediation) {
+      recipient_key_ =
+          &parameters_.add_xavier("recipient_key", m, w, generator);
+      recipient_bias_ = &parameters_.add_zeros("recipient_bias", m, w);
+    }
     broadcast_projection_ = &parameters_.add_xavier(
         "broadcast_projection", w, w, generator);
     broadcast_bias_ = &parameters_.add_zeros("broadcast_bias", 1, w);
 
     output_workspace_ =
         &parameters_.add_xavier("output_workspace", c, w, generator);
-    output_mechanism_ =
-        &parameters_.add_xavier("output_mechanism", c, d, generator);
+    if (config_.output_reads_mechanism) {
+      output_mechanism_ =
+          &parameters_.add_xavier("output_mechanism", c, d, generator);
+    }
   }
 
   if (!parameters_.all_finite()) {
@@ -277,6 +311,11 @@ SequenceResult SgwEsmModel::forward_sequence(
   if (tokens.empty()) {
     throw std::invalid_argument("input sequence must not be empty");
   }
+  if (config_.fixed_binding_mediation &&
+      tokens.size() != 2 * config_.mediation_binding_count + 2) {
+    throw std::invalid_argument(
+        "fixed_binding_mediation requires the configured binding sequence length");
+  }
   for (const int token : tokens) {
     if (token < 0 || static_cast<std::size_t>(token) >= config_.vocab_size) {
       throw std::out_of_range("input token out of vocabulary range");
@@ -292,6 +331,8 @@ SequenceResult SgwEsmModel::forward_sequence(
 
   const bool workspace_persists =
       intervention != ForwardIntervention::no_workspace_persistence;
+  const bool workspace_writes_enabled =
+      intervention != ForwardIntervention::no_workspace_writes;
   const bool broadcast_enabled =
       intervention != ForwardIntervention::no_broadcast &&
       intervention != ForwardIntervention::workspace_disconnected;
@@ -319,7 +360,8 @@ SequenceResult SgwEsmModel::forward_sequence(
     traces.reserve(tokens.size());
   }
 
-  for (const int token : tokens) {
+  for (std::size_t step = 0; step < tokens.size(); ++step) {
+    const int token = tokens[step];
     if (!config_.core_only && !workspace_persists) {
       state.workspace = zero_vector(tape, b * w);
     }
@@ -334,9 +376,13 @@ SequenceResult SgwEsmModel::forward_sequence(
     std::vector<ad::Var> embedding;
     embedding.reserve(e);
     const std::size_t token_index = static_cast<std::size_t>(token);
-    for (std::size_t component = 0; component < e; ++component) {
-      embedding.push_back(matrix_entry(tape, *embedding_, token_index,
-                                       component));
+    if (embedding_ != nullptr) {
+      for (std::size_t component = 0; component < e; ++component) {
+        embedding.push_back(matrix_entry(tape, *embedding_, token_index,
+                                         component));
+      }
+    } else {
+      embedding = zero_vector(tape, e);
     }
 
     const std::vector<ad::Var> old_workspace_pool =
@@ -345,8 +391,10 @@ SequenceResult SgwEsmModel::forward_sequence(
     new_spine.reserve(s);
     for (std::size_t component = 0; component < s; ++component) {
       ad::Var sum = parameter_var(tape, *spine_bias_, component);
-      sum = add_parameter_dot(tape, sum, *spine_input_, component,
-                              embedding);
+      if (config_.spine_reads_embedding) {
+        sum = add_parameter_dot(tape, sum, *spine_input_, component,
+                                embedding);
+      }
       sum = add_parameter_dot(tape, sum, *spine_recurrent_, component,
                               state.spine);
       if (!config_.core_only && spine_workspace_enabled) {
@@ -358,27 +406,36 @@ SequenceResult SgwEsmModel::forward_sequence(
     state.spine = std::move(new_spine);
 
     if (!config_.core_only) {
-      std::vector<ad::Var> router_scores;
-      router_scores.reserve(m);
-      for (std::size_t mechanism = 0; mechanism < m; ++mechanism) {
-        ad::Var score = parameter_var(tape, *router_bias_, mechanism);
-        score = add_parameter_dot(tape, score, *router_embedding_, mechanism,
-                                  embedding);
-        score = add_parameter_dot(tape, score, *router_spine_, mechanism,
-                                  state.spine);
-        score = add_parameter_dot(tape, score, *router_workspace_, mechanism,
-                                  old_workspace_pool);
-        const std::span<const ad::Var> mechanism_state(
-            state.mechanisms.data() + mechanism * d, d);
-        score = add_parameter_dot(tape, score, *router_state_, mechanism,
-                                  mechanism_state);
-        router_scores.push_back(score);
+      std::vector<std::size_t> active;
+      std::vector<ad::Var> route_weights;
+      if (config_.fixed_binding_mediation) {
+        const std::size_t writer_token_count =
+            2 * config_.mediation_binding_count;
+        const std::size_t mechanism =
+            step < writer_token_count ? step / 2
+                                      : config_.mediation_binding_count;
+        active.push_back(mechanism);
+        route_weights.push_back(tape.constant(1.0));
+      } else {
+        std::vector<ad::Var> router_scores;
+        router_scores.reserve(m);
+        for (std::size_t mechanism = 0; mechanism < m; ++mechanism) {
+          ad::Var score = parameter_var(tape, *router_bias_, mechanism);
+          score = add_parameter_dot(tape, score, *router_embedding_, mechanism,
+                                    embedding);
+          score = add_parameter_dot(tape, score, *router_spine_, mechanism,
+                                    state.spine);
+          score = add_parameter_dot(tape, score, *router_workspace_, mechanism,
+                                    old_workspace_pool);
+          const std::span<const ad::Var> mechanism_state(
+              state.mechanisms.data() + mechanism * d, d);
+          score = add_parameter_dot(tape, score, *router_state_, mechanism,
+                                    mechanism_state);
+          router_scores.push_back(score);
+        }
+        active = select_vars(router_scores, config_.active_mechanisms);
+        route_weights = selected_softmax_vars(tape, router_scores, active);
       }
-
-      const std::vector<std::size_t> active =
-          select_vars(router_scores, config_.active_mechanisms);
-      const std::vector<ad::Var> route_weights =
-          selected_softmax_vars(tape, router_scores, active);
       if (capture_trace) {
         trace.active_mechanisms = active;
       }
@@ -394,8 +451,19 @@ SequenceResult SgwEsmModel::forward_sequence(
         updated.reserve(d);
         const std::span<const ad::Var> old_mechanism(
             state.mechanisms.data() + mechanism * d, d);
-        const std::span<const ad::Var> inbox(
-            state.inboxes.data() + mechanism * w, w);
+        std::vector<ad::Var> zero_inbox;
+        const bool reader_inbox_zeroed =
+            intervention == ForwardIntervention::zero_reader_inbox &&
+            config_.fixed_binding_mediation &&
+            mechanism == config_.mediation_binding_count;
+        std::span<const ad::Var> inbox;
+        if (reader_inbox_zeroed) {
+          zero_inbox = zero_vector(tape, w);
+          inbox = std::span<const ad::Var>(zero_inbox);
+        } else {
+          inbox = std::span<const ad::Var>(
+              state.inboxes.data() + mechanism * w, w);
+        }
         for (std::size_t component = 0; component < d; ++component) {
           const std::size_t row = mechanism * d + component;
           ad::Var sum = parameter_var(
@@ -422,15 +490,23 @@ SequenceResult SgwEsmModel::forward_sequence(
           sum = add_parameter_dot(tape, sum, *message_state_, row, updated);
           message.push_back(ad::tanh(sum));
         }
-        ad::Var utility = parameter_var(tape, *writer_bias_, mechanism);
-        utility = add_parameter_dot(tape, utility, *writer_key_, mechanism,
-                                    message);
         messages.push_back(std::move(message));
-        utilities.push_back(utility);
+        if (!config_.fixed_binding_mediation) {
+          ad::Var utility = parameter_var(tape, *writer_bias_, mechanism);
+          utility = add_parameter_dot(tape, utility, *writer_key_, mechanism,
+                                      messages.back());
+          utilities.push_back(utility);
+        }
       }
 
-      const std::vector<std::size_t> writer_local =
-          select_vars(utilities, config_.workspace_writers);
+      std::vector<std::size_t> writer_local;
+      if (config_.fixed_binding_mediation) {
+        if (step < 2 * config_.mediation_binding_count) {
+          writer_local.push_back(0);
+        }
+      } else {
+        writer_local = select_vars(utilities, config_.workspace_writers);
+      }
       std::vector<ad::Var> new_workspace = state.workspace;
       if (capture_trace) {
         trace.writers.reserve(writer_local.size());
@@ -439,23 +515,30 @@ SequenceResult SgwEsmModel::forward_sequence(
       for (const std::size_t local_index : writer_local) {
         const std::size_t mechanism = active[local_index];
         const std::vector<ad::Var>& message = messages[local_index];
-        std::vector<ad::Var> slot_scores;
-        slot_scores.reserve(b);
-        for (std::size_t slot = 0; slot < b; ++slot) {
-          ad::Var score = tape.constant(0.0);
-          for (std::size_t component = 0; component < w; ++component) {
-            const ad::Var slot_content =
-                new_workspace[slot * w + component];
-            const ad::Var key = matrix_entry(tape, *slot_key_, slot,
-                                             component);
-            score = score + message[component] * (slot_content + key);
+        std::size_t slot = mechanism;
+        if (!config_.fixed_binding_mediation) {
+          std::vector<ad::Var> slot_scores;
+          slot_scores.reserve(b);
+          for (std::size_t candidate_slot = 0; candidate_slot < b;
+               ++candidate_slot) {
+            ad::Var score = tape.constant(0.0);
+            for (std::size_t component = 0; component < w; ++component) {
+              const ad::Var slot_content =
+                  new_workspace[candidate_slot * w + component];
+              const ad::Var key = matrix_entry(tape, *slot_key_,
+                                               candidate_slot, component);
+              score = score + message[component] * (slot_content + key);
+            }
+            slot_scores.push_back(score);
           }
-          slot_scores.push_back(score);
+          slot = select_vars(slot_scores, 1).front();
         }
-        const std::size_t slot = select_vars(slot_scores, 1).front();
         if (capture_trace) {
           trace.writers.push_back(mechanism);
           trace.writer_slots.push_back(slot);
+        }
+        if (!workspace_writes_enabled) {
+          continue;
         }
 
         std::vector<ad::Var> old_slot;
@@ -489,17 +572,22 @@ SequenceResult SgwEsmModel::forward_sequence(
 
       const std::vector<ad::Var> new_workspace_pool =
           pool_workspace(tape, new_workspace, b, w);
-      std::vector<ad::Var> recipient_scores;
-      recipient_scores.reserve(m);
-      for (std::size_t mechanism = 0; mechanism < m; ++mechanism) {
-        ad::Var score = parameter_var(
-            tape, *recipient_bias_, mechanism * w);
-        score = add_parameter_dot(tape, score, *recipient_key_, mechanism,
-                                  new_workspace_pool);
-        recipient_scores.push_back(score);
+      std::vector<std::size_t> recipients;
+      if (config_.fixed_binding_mediation) {
+        recipients.push_back(config_.mediation_binding_count);
+      } else {
+        std::vector<ad::Var> recipient_scores;
+        recipient_scores.reserve(m);
+        for (std::size_t mechanism = 0; mechanism < m; ++mechanism) {
+          ad::Var score = parameter_var(
+              tape, *recipient_bias_, mechanism * w);
+          score = add_parameter_dot(tape, score, *recipient_key_, mechanism,
+                                    new_workspace_pool);
+          recipient_scores.push_back(score);
+        }
+        recipients =
+            select_vars(recipient_scores, config_.broadcast_recipients);
       }
-      std::vector<std::size_t> recipients =
-          select_vars(recipient_scores, config_.broadcast_recipients);
       if (intervention == ForwardIntervention::permuted_recipients) {
         for (std::size_t& recipient : recipients) {
           recipient = (recipient + 1) % m;
@@ -520,12 +608,15 @@ SequenceResult SgwEsmModel::forward_sequence(
       std::vector<ad::Var> new_inboxes = state.inboxes;
       if (broadcast_enabled) {
         for (const std::size_t recipient : recipients) {
-        for (std::size_t component = 0; component < w; ++component) {
-          const ad::Var bias = parameter_var(
-              tape, *recipient_bias_, recipient * w + component);
-          new_inboxes[recipient * w + component] =
-              ad::tanh(broadcast_base[component] + bias);
-        }
+          for (std::size_t component = 0; component < w; ++component) {
+            ad::Var value = broadcast_base[component];
+            if (!config_.fixed_binding_mediation) {
+              value = value + parameter_var(
+                                  tape, *recipient_bias_,
+                                  recipient * w + component);
+            }
+            new_inboxes[recipient * w + component] = ad::tanh(value);
+          }
         }
       }
 
@@ -565,8 +656,10 @@ SequenceResult SgwEsmModel::forward_sequence(
   }
   for (std::size_t output = 0; output < config_.output_classes; ++output) {
     ad::Var logit = parameter_var(tape, *output_bias_, output);
-    logit = add_parameter_dot(tape, logit, *output_spine_, output,
-                              state.spine);
+    if (config_.output_reads_spine) {
+      logit = add_parameter_dot(tape, logit, *output_spine_, output,
+                                state.spine);
+    }
     if (!config_.core_only) {
       ad::Var workspace_logit = tape.constant(0.0);
       workspace_logit = add_parameter_dot(

@@ -118,3 +118,65 @@ SGW_TEST(experiment_conditions_separate_topology_from_training_objective) {
           ExperimentCondition::sgw_broadcast_forced_aux_annealed) ==
       std::string_view("sgw_broadcast_forced_aux_annealed"));
 }
+
+namespace {
+
+bool has_parameter(const sgw::SgwEsmModel& model, std::string_view name) {
+  for (const auto& parameter : model.parameters().parameters()) {
+    if (parameter->name() == name) {
+      return true;
+    }
+  }
+  return false;
+}
+
+}  // namespace
+
+SGW_TEST(phase4_conditions_map_to_content_controls_and_fixed_mediation) {
+  using sgw::ExperimentCondition;
+  SGW_REQUIRE(sgw::parse_experiment_condition("core_full_content") ==
+              ExperimentCondition::core_full_content);
+  SGW_REQUIRE(sgw::parse_experiment_condition("core_content_blind") ==
+              ExperimentCondition::core_content_blind);
+  SGW_REQUIRE(sgw::parse_experiment_condition("mediation_final_only") ==
+              ExperimentCondition::mediation_final_only);
+  SGW_REQUIRE(sgw::parse_experiment_condition("mediation_aux_annealed") ==
+              ExperimentCondition::mediation_aux_annealed);
+  SGW_REQUIRE(sgw::model_preset_for_condition(
+                  ExperimentCondition::mediation_aux_annealed) ==
+              sgw::ModelPreset::mediation_fixed);
+  SGW_REQUIRE_NEAR(sgw::condition_workspace_aux_weight(
+                       ExperimentCondition::mediation_aux_annealed),
+                   0.5, 0.0);
+  SGW_REQUIRE(sgw::condition_workspace_aux_anneal_steps(
+                  ExperimentCondition::mediation_aux_annealed) == 200);
+}
+
+SGW_TEST(phase4_presets_remove_content_bypass_and_learned_address_parameters) {
+  const auto full =
+      sgw::make_model_config(sgw::ModelPreset::core_full_content, 13, 5);
+  const auto blind =
+      sgw::make_model_config(sgw::ModelPreset::core_content_blind, 13, 5);
+  const auto mediation =
+      sgw::make_model_config(sgw::ModelPreset::mediation_fixed, 13, 5);
+  sgw::SgwEsmModel full_model(full, 1);
+  sgw::SgwEsmModel blind_model(blind, 1);
+  sgw::SgwEsmModel mediation_model(mediation, 1);
+
+  SGW_REQUIRE(full.spine_reads_embedding);
+  SGW_REQUIRE(!blind.spine_reads_embedding);
+  SGW_REQUIRE(full_model.parameters().scalar_count() == 1169);
+  SGW_REQUIRE(blind_model.parameters().scalar_count() == 725);
+  SGW_REQUIRE(mediation.fixed_binding_mediation);
+  SGW_REQUIRE(mediation.mechanism_count == 4);
+  SGW_REQUIRE(mediation.workspace_slots == 3);
+  SGW_REQUIRE(mediation.active_mechanisms == 1);
+  SGW_REQUIRE(mediation.workspace_writers == 1);
+  SGW_REQUIRE(mediation.broadcast_recipients == 1);
+  SGW_REQUIRE(mediation_model.parameters().scalar_count() == 15650);
+  SGW_REQUIRE(sgw::estimated_step_madds(mediation) == 6784);
+  SGW_REQUIRE(!has_parameter(mediation_model, "router_embedding"));
+  SGW_REQUIRE(!has_parameter(mediation_model, "writer_key"));
+  SGW_REQUIRE(!has_parameter(mediation_model, "slot_key"));
+  SGW_REQUIRE(!has_parameter(mediation_model, "recipient_key"));
+}

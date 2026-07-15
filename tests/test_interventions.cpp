@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -190,4 +191,49 @@ SGW_TEST(workspace_disconnected_matches_all_workspace_reads_disabled) {
   for (const auto& trace : disconnected.traces) {
     SGW_REQUIRE(trace.inbox_before == trace.inbox_after);
   }
+}
+
+SGW_TEST(no_workspace_writes_preserves_fixed_writer_trace_but_keeps_workspace_zero) {
+  const auto config =
+      sgw::make_model_config(sgw::ModelPreset::mediation_fixed, 13, 5);
+  sgw::SgwEsmModel model(config, 79);
+  const std::vector<int> tokens{0, 6, 1, 7, 2, 8, 12, 1};
+  sgw::ad::Tape intact_tape;
+  sgw::ad::Tape ablated_tape;
+  const auto intact = model.forward_sequence(intact_tape, tokens, true);
+  const auto ablated = model.forward_sequence(
+      ablated_tape, tokens, true,
+      sgw::ForwardIntervention::no_workspace_writes);
+  SGW_REQUIRE(sgw::same_route_trace(intact.traces, ablated.traces));
+  for (const auto value : ablated.final_state.workspace) {
+    SGW_REQUIRE_NEAR(value.value(), 0.0, 0.0);
+  }
+  SGW_REQUIRE(any_difference(logits_of(intact), logits_of(ablated)));
+}
+
+SGW_TEST(zero_reader_inbox_matches_no_broadcast_for_fixed_mediation) {
+  const auto config =
+      sgw::make_model_config(sgw::ModelPreset::mediation_fixed, 13, 5);
+  sgw::SgwEsmModel model(config, 83);
+  const std::vector<int> tokens{0, 6, 1, 7, 2, 8, 12, 1};
+  sgw::ad::Tape broadcast_tape;
+  sgw::ad::Tape inbox_tape;
+  const auto no_broadcast = model.forward_sequence(
+      broadcast_tape, tokens, true,
+      sgw::ForwardIntervention::no_broadcast);
+  const auto zero_inbox = model.forward_sequence(
+      inbox_tape, tokens, true,
+      sgw::ForwardIntervention::zero_reader_inbox);
+  SGW_REQUIRE(logits_of(no_broadcast) == logits_of(zero_inbox));
+  SGW_REQUIRE(sgw::same_route_trace(no_broadcast.traces,
+                                    zero_inbox.traces));
+}
+
+SGW_TEST(phase4_intervention_names_are_explicit) {
+  SGW_REQUIRE(sgw::forward_intervention_name(
+                  sgw::ForwardIntervention::no_workspace_writes) ==
+              std::string_view("no_workspace_writes"));
+  SGW_REQUIRE(sgw::forward_intervention_name(
+                  sgw::ForwardIntervention::zero_reader_inbox) ==
+              std::string_view("zero_reader_inbox"));
 }

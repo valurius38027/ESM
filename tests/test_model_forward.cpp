@@ -1,6 +1,7 @@
 #include "test_harness.hpp"
 
 #include "sgw/model.hpp"
+#include "sgw/presets.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -154,4 +155,43 @@ SGW_TEST(core_only_mode_skips_sparse_workspace_execution) {
     SGW_REQUIRE(trace.recipients.empty());
     SGW_REQUIRE(trace.estimated_madds == sgw::estimated_step_madds(config));
   }
+}
+
+SGW_TEST(fixed_mediation_uses_one_writer_per_binding_and_one_reader) {
+  const auto config =
+      sgw::make_model_config(sgw::ModelPreset::mediation_fixed, 13, 5);
+  sgw::SgwEsmModel model(config, 71);
+  const std::vector<int> tokens{0, 6, 1, 7, 2, 8, 12, 1};
+  sgw::ad::Tape tape;
+  const auto result = model.forward_sequence(tape, tokens, true);
+
+  SGW_REQUIRE(result.traces.size() == 8);
+  const std::vector<std::size_t> expected_active{0, 0, 1, 1, 2, 2, 3, 3};
+  for (std::size_t step = 0; step < result.traces.size(); ++step) {
+    const auto& trace = result.traces[step];
+    SGW_REQUIRE(trace.active_mechanisms ==
+                std::vector<std::size_t>{expected_active[step]});
+    SGW_REQUIRE(trace.recipients == std::vector<std::size_t>{3});
+    if (step < 6) {
+      SGW_REQUIRE(trace.writers ==
+                  std::vector<std::size_t>{expected_active[step]});
+      SGW_REQUIRE(trace.writer_slots ==
+                  std::vector<std::size_t>{expected_active[step]});
+    } else {
+      SGW_REQUIRE(trace.writers.empty());
+      SGW_REQUIRE(trace.writer_slots.empty());
+    }
+  }
+  for (const auto value : result.final_state.spine) {
+    SGW_REQUIRE_NEAR(value.value(), 0.0, 0.0);
+  }
+}
+
+SGW_TEST(fixed_mediation_rejects_noncanonical_sequence_length) {
+  const auto config =
+      sgw::make_model_config(sgw::ModelPreset::mediation_fixed, 13, 5);
+  sgw::SgwEsmModel model(config, 73);
+  const std::vector<int> too_short{0, 6, 1, 7, 2, 8, 12};
+  sgw::ad::Tape tape;
+  SGW_REQUIRE_THROWS(model.forward_sequence(tape, too_short, false));
 }
