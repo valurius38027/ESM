@@ -166,6 +166,11 @@ python3 scripts/aggregate_phase2.py \
   --seed-start 0 --seed-count 5 --bootstrap-replicates 50000
 ```
 
-The repository does not claim a Phase 2 advantage until the formal artifact is
-complete and its paired confidence intervals satisfy the gates in
-[`docs/superpowers/specs/2026-07-15-sgw-esm-phase2-controls-design.md`](docs/superpowers/specs/2026-07-15-sgw-esm-phase2-controls-design.md).
+Phase 2 formal results are complete for 30 paired seeds. SGW did not pass the
+prespecified superiority gate against both matched recurrent controls. Disabling
+mechanism broadcast slightly improved NLL, while the remaining workspace
+interventions had confidence intervals crossing zero. The current workspace and
+broadcast loop is therefore not yet a demonstrated beneficial causal mechanism.
+
+See [`results/PHASE2_VALIDATION.md`](results/PHASE2_VALIDATION.md) and the
+committed consolidated files under [`results/phase2-formal/`](results/phase2-formal/).
