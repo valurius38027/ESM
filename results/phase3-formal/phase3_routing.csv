@@ -1,0 +1,7 @@
+condition,seeds,normalized_mechanism_entropy_mean,normalized_mechanism_entropy_sd,role_mechanism_mutual_information_mean,role_mechanism_mutual_information_sd,normalized_role_mechanism_mutual_information_mean,normalized_role_mechanism_mutual_information_sd
+core_small,30,0.0,0.0,0.0,0.0,0.0,0.0
+core_compute_matched,30,0.0,0.0,0.0,0.0,0.0,0.0
+core_param_matched,30,0.0,0.0,0.0,0.0,0.0,0.0
+sgw_redundant_final_only,30,0.9488885357355238,0.02923705824717487,0.0371861340643176,0.012979610233929175,0.02310504417537773,0.008064685275307652
+sgw_broadcast_forced_final_only,30,0.9323894925765909,0.029000066695921922,0.03990267500359138,0.015524927024421856,0.024792925962109913,0.009646179516761904
+sgw_broadcast_forced_aux_annealed,30,0.9320620795966956,0.028948052315653137,0.03364418841767969,0.014346592026251728,0.02090430960881026,0.008914038817784567

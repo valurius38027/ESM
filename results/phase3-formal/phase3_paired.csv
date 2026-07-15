@@ -1,0 +1,8 @@
+comparison,baseline,candidate,seeds,mean_baseline_minus_candidate_nll,ci_lower,ci_upper,sd,cohen_dz,positive_seeds,negative_seeds,ties
+core_small_vs_redundant,core_small,sgw_redundant_final_only,30,-0.036851576111366656,-0.13253644849149998,0.06071945312959997,0.27551423595709423,-0.13375561514398676,11,19,0
+core_compute_matched_vs_redundant,core_compute_matched,sgw_redundant_final_only,30,0.09263978837693336,-0.034684710858833304,0.22196443628883336,0.3660418921608719,0.25308520789805955,19,11,0
+core_param_matched_vs_redundant,core_param_matched,sgw_redundant_final_only,30,0.18847109692613334,0.06712058854253332,0.3108940654176667,0.34774757814287577,0.5419767347702361,18,12,0
+forced_final_vs_redundant,sgw_redundant_final_only,sgw_broadcast_forced_final_only,30,-0.03036133844046668,-0.1319961306052,0.07531854207913333,0.2938624179192682,-0.10331820807656916,11,19,0
+forced_aux_vs_forced_final,sgw_broadcast_forced_final_only,sgw_broadcast_forced_aux_annealed,30,-0.09177415421063333,-0.20025542973976665,0.01821760617556667,0.31171813352855593,-0.29441390903948184,12,18,0
+core_compute_matched_vs_forced_aux,core_compute_matched,sgw_broadcast_forced_aux_annealed,30,-0.02949570427416665,-0.1940297597670333,0.12908748430073336,0.45895188964262323,-0.06426752986491541,15,15,0
+core_param_matched_vs_forced_aux,core_param_matched,sgw_broadcast_forced_aux_annealed,30,0.06633560427503335,-0.08584782471793331,0.21560533408489999,0.42857160852270154,0.15478301165047786,17,13,0
