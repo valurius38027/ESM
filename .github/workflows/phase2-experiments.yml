@@ -1,8 +1,8 @@
 name: Phase 2 Formal Experiments
 
 on:
-  push:
-    branches: [agent/phase2-experimental-controls]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
     inputs:
       steps:
@@ -19,6 +19,7 @@ permissions:
 
 jobs:
   shard:
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'agent/phase2-experimental-controls'
     name: Seeds ${{ matrix.shard }}
     runs-on: ubuntu-24.04
     timeout-minutes: 180
@@ -56,6 +57,7 @@ jobs:
           retention-days: 30
 
   aggregate:
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'agent/phase2-experimental-controls'
     name: Aggregate formal results
     needs: shard
     runs-on: ubuntu-24.04
