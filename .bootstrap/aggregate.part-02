@@ -1,0 +1,79 @@
+OTSTRAP_SEED + seed_offset)
+    count = len(differences)
+    bootstrap = []
+    for _ in range(replicates):
+        bootstrap.append(
+            statistics.fmean(differences[generator.randrange(count)] for _ in range(count))
+        )
+    bootstrap.sort()
+    positive = sum(value > 0.0 for value in differences)
+    negative = sum(value < 0.0 for value in differences)
+    return {
+        "seeds": count,
+        "mean": mean,
+        "sd": sd,
+        "ci_lower": percentile(bootstrap, 0.025),
+        "ci_upper": percentile(bootstrap, 0.975),
+        "cohen_dz": mean / sd if sd > 0.0 else (math.inf if mean > 0.0 else 0.0),
+        "positive_seeds": positive,
+        "negative_seeds": negative,
+        "ties": count - positive - negative,
+    }
+
+
+def summarize_runs(rows: list[dict[str, str]]) -> list[dict[str, object]]:
+    grouped: dict[str, list[dict[str, str]]] = defaultdict(list)
+    for row in rows:
+        grouped[row["preset"]].append(row)
+    summaries: list[dict[str, object]] = []
+    for preset in PRESETS:
+        result: dict[str, object] = {"preset": preset, "seeds": len(grouped[preset])}
+        for metric in SUMMARY_METRICS:
+            mean, sd = mean_sd(float(row[metric]) for row in grouped[preset])
+            result[f"{metric}_mean"] = mean
+            result[f"{metric}_sd"] = sd
+        summaries.append(result)
+    return summaries
+
+
+def compare_runs(
+    rows: list[dict[str, str]], replicates: int
+) -> list[dict[str, object]]:
+    by_seed: dict[int, dict[str, dict[str, str]]] = defaultdict(dict)
+    for row in rows:
+        by_seed[int(row["seed"])][row["preset"]] = row
+    results: list[dict[str, object]] = []
+    baselines = ("core_small", "core_compute_matched", "core_param_matched")
+    for index, baseline in enumerate(baselines):
+        differences = [
+            float(by_seed[seed][baseline]["final_holdout_nll"])
+            - float(by_seed[seed]["sgw"]["final_holdout_nll"])
+            for seed in sorted(by_seed)
+        ]
+        stats = paired_stats(differences, replicates, index)
+        results.append(
+            {
+                "comparison": f"{baseline}_vs_sgw",
+                "seeds": stats["seeds"],
+                "mean_baseline_minus_sgw_nll": stats["mean"],
+                "ci_lower": stats["ci_lower"],
+                "ci_upper": stats["ci_upper"],
+                "sd": stats["sd"],
+                "cohen_dz": stats["cohen_dz"],
+                "positive_seeds": stats["positive_seeds"],
+                "negative_seeds": stats["negative_seeds"],
+                "ties": stats["ties"],
+            }
+        )
+    return results
+
+
+def compare_causal(
+    rows: list[dict[str, str]], replicates: int
+) -> list[dict[str, object]]:
+    by_seed: dict[int, dict[str, dict[str, str]]] = defaultdict(dict)
+    for row in rows:
+        by_seed[int(row["seed"])][row["intervention"]] = row
+    results: list[dict[str, object]] = []
+    for index, intervention in enumerate(INTERVENTIONS[1:], start=100):
+        nll_differen

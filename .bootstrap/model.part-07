@@ -1,0 +1,19 @@
+::Var logit = parameter_var(tape, *output_bias_, output);
+    logit = add_parameter_dot(tape, logit, *output_spine_, output,
+                              state.spine);
+    if (!config_.core_only) {
+      if (intervention != ForwardIntervention::no_workspace_output) {
+        logit = add_parameter_dot(tape, logit, *output_workspace_, output,
+                                  final_workspace_pool);
+      }
+      logit = add_parameter_dot(tape, logit, *output_mechanism_, output,
+                                state.active_summary);
+    }
+    logits.push_back(logit);
+  }
+
+  return SequenceResult{std::move(logits), std::move(state),
+                        std::move(traces)};
+}
+
+}  // namespace sgw

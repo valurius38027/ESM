@@ -1,0 +1,83 @@
+nite values");
+  }
+}
+
+const ModelConfig& SgwEsmModel::config() const noexcept { return config_; }
+ParameterSet& SgwEsmModel::parameters() noexcept { return parameters_; }
+const ParameterSet& SgwEsmModel::parameters() const noexcept {
+  return parameters_;
+}
+
+SequenceResult SgwEsmModel::forward_sequence(
+    ad::Tape& tape, std::span<const int> tokens, bool capture_trace,
+    ForwardIntervention intervention) {
+  if (tokens.empty()) {
+    throw std::invalid_argument("input sequence must not be empty");
+  }
+  for (const int token : tokens) {
+    if (token < 0 || static_cast<std::size_t>(token) >= config_.vocab_size) {
+      throw std::out_of_range("input token out of vocabulary range");
+    }
+  }
+
+  const std::size_t e = config_.embedding_dim;
+  const std::size_t s = config_.spine_dim;
+  const std::size_t m = config_.mechanism_count;
+  const std::size_t d = config_.mechanism_dim;
+  const std::size_t b = config_.workspace_slots;
+  const std::size_t w = config_.workspace_dim;
+
+  ModelState state;
+  state.spine = zero_vector(tape, s);
+  state.mechanisms = zero_vector(tape, m * d);
+  state.workspace = zero_vector(tape, b * w);
+  state.inboxes = zero_vector(tape, m * w);
+  state.active_summary = zero_vector(tape, d);
+
+  std::vector<StepTrace> traces;
+  if (capture_trace) {
+    traces.reserve(tokens.size());
+  }
+
+  for (const int token : tokens) {
+    if (!config_.core_only &&
+        intervention == ForwardIntervention::no_workspace_persistence) {
+      state.workspace = zero_vector(tape, b * w);
+    }
+    StepTrace trace;
+    if (capture_trace) {
+      trace.mechanism_state_before = snapshot(state.mechanisms);
+      trace.inbox_before = snapshot(state.inboxes);
+      trace.workspace_before = snapshot(state.workspace);
+      trace.estimated_madds = estimated_step_madds(config_);
+    }
+
+    std::vector<ad::Var> embedding;
+    embedding.reserve(e);
+    const std::size_t token_index = static_cast<std::size_t>(token);
+    for (std::size_t component = 0; component < e; ++component) {
+      embedding.push_back(matrix_entry(tape, *embedding_, token_index,
+                                       component));
+    }
+
+    const std::vector<ad::Var> old_workspace_pool =
+        pool_workspace(tape, state.workspace, b, w);
+    std::vector<ad::Var> new_spine;
+    new_spine.reserve(s);
+    for (std::size_t component = 0; component < s; ++component) {
+      ad::Var sum = parameter_var(tape, *spine_bias_, component);
+      sum = add_parameter_dot(tape, sum, *spine_input_, component,
+                              embedding);
+      sum = add_parameter_dot(tape, sum, *spine_recurrent_, component,
+                              state.spine);
+      if (!config_.core_only) {
+        sum = add_parameter_dot(tape, sum, *spine_workspace_, component,
+                                old_workspace_pool);
+      }
+      new_spine.push_back(ad::tanh(sum));
+    }
+    state.spine = std::move(new_spine);
+
+    if (!config_.core_only) {
+      std::vector<ad::Var> router_scores;
+      router_

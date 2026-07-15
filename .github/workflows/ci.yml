@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main, agent/phase2-experimental-controls]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GCC Debug
+            cc: gcc
+            cxx: g++
+            build_type: Debug
+            sanitizers: OFF
+          - name: Clang Debug
+            cc: clang
+            cxx: clang++
+            build_type: Debug
+            sanitizers: OFF
+          - name: ASan UBSan
+            cc: clang
+            cxx: clang++
+            build_type: Debug
+            sanitizers: ON
+          - name: GCC Release
+            cc: gcc
+            cxx: g++
+            build_type: Release
+            sanitizers: OFF
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+        run: >-
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DSGW_ENABLE_SANITIZERS=${{ matrix.sanitizers }}
+      - name: Build
+        run: cmake --build build --parallel 2
+      - name: Test
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: ctest --test-dir build --output-on-failure
+      - name: Check diff whitespace
+        run: git diff --check

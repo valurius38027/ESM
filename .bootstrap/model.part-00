@@ -1,0 +1,94 @@
+#include "sgw/model.hpp"
+
+#include "sgw/topk.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <random>
+#include <stdexcept>
+#include <string>
+#include <utility>
+
+namespace sgw {
+namespace {
+
+ad::Var parameter_var(ad::Tape& tape, Parameter& parameter,
+                      std::size_t index) {
+  return tape.parameter(parameter.value(index), &parameter.gradient(index));
+}
+
+ad::Var matrix_entry(ad::Tape& tape, Parameter& parameter, std::size_t row,
+                     std::size_t column) {
+  return parameter_var(tape, parameter, row * parameter.columns() + column);
+}
+
+std::vector<ad::Var> zero_vector(ad::Tape& tape, std::size_t size) {
+  std::vector<ad::Var> values;
+  values.reserve(size);
+  for (std::size_t index = 0; index < size; ++index) {
+    values.push_back(tape.constant(0.0));
+  }
+  return values;
+}
+
+std::vector<double> snapshot(std::span<const ad::Var> values) {
+  std::vector<double> result;
+  result.reserve(values.size());
+  for (const ad::Var value : values) {
+    result.push_back(value.value());
+  }
+  return result;
+}
+
+ad::Var affine_row(ad::Tape& tape, Parameter& weights, std::size_t row,
+                   std::span<const ad::Var> input, ad::Var initial) {
+  if (weights.columns() != input.size() || row >= weights.rows()) {
+    throw std::logic_error("affine row shape mismatch");
+  }
+  ad::Var sum = initial;
+  for (std::size_t column = 0; column < input.size(); ++column) {
+    sum = sum + matrix_entry(tape, weights, row, column) * input[column];
+  }
+  return sum;
+}
+
+ad::Var add_parameter_dot(ad::Tape& tape, ad::Var initial,
+                          Parameter& weights, std::size_t row,
+                          std::span<const ad::Var> input) {
+  return affine_row(tape, weights, row, input, initial);
+}
+
+std::vector<ad::Var> pool_workspace(ad::Tape& tape,
+                                    std::span<const ad::Var> workspace,
+                                    std::size_t slot_count,
+                                    std::size_t dimension) {
+  if (workspace.size() != slot_count * dimension) {
+    throw std::logic_error("workspace shape mismatch");
+  }
+  std::vector<ad::Var> pooled;
+  pooled.reserve(dimension);
+  const ad::Var denominator = tape.constant(static_cast<double>(slot_count));
+  for (std::size_t component = 0; component < dimension; ++component) {
+    ad::Var sum = tape.constant(0.0);
+    for (std::size_t slot = 0; slot < slot_count; ++slot) {
+      sum = sum + workspace[slot * dimension + component];
+    }
+    pooled.push_back(sum / denominator);
+  }
+  return pooled;
+}
+
+std::vector<std::size_t> select_vars(std::span<const ad::Var> scores,
+                                     std::size_t count) {
+  std::vector<double> values;
+  values.reserve(scores.size());
+  for (const ad::Var score : scores) {
+    values.push_back(score.value());
+  }
+  return stable_topk(values, count);
+}
+
+std::vector<ad::Var> selected_softmax_vars(
+    ad::Tape& tape, std::span<const ad::Var> scores,
+    std::span<const std::size_t> selected) {
+  if

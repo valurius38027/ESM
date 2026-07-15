@@ -1,0 +1,64 @@
+scores.reserve(m);
+      for (std::size_t mechanism = 0; mechanism < m; ++mechanism) {
+        ad::Var score = parameter_var(tape, *router_bias_, mechanism);
+        score = add_parameter_dot(tape, score, *router_embedding_, mechanism,
+                                  embedding);
+        score = add_parameter_dot(tape, score, *router_spine_, mechanism,
+                                  state.spine);
+        score = add_parameter_dot(tape, score, *router_workspace_, mechanism,
+                                  old_workspace_pool);
+        const std::span<const ad::Var> mechanism_state(
+            state.mechanisms.data() + mechanism * d, d);
+        score = add_parameter_dot(tape, score, *router_state_, mechanism,
+                                  mechanism_state);
+        router_scores.push_back(score);
+      }
+
+      const std::vector<std::size_t> active =
+          select_vars(router_scores, config_.active_mechanisms);
+      const std::vector<ad::Var> route_weights =
+          selected_softmax_vars(tape, router_scores, active);
+      if (capture_trace) {
+        trace.active_mechanisms = active;
+      }
+
+      std::vector<ad::Var> new_mechanisms = state.mechanisms;
+      std::vector<std::vector<ad::Var>> messages;
+      std::vector<ad::Var> utilities;
+      messages.reserve(active.size());
+      utilities.reserve(active.size());
+
+      for (const std::size_t mechanism : active) {
+        std::vector<ad::Var> updated;
+        updated.reserve(d);
+        const std::span<const ad::Var> old_mechanism(
+            state.mechanisms.data() + mechanism * d, d);
+        const std::span<const ad::Var> inbox(
+            state.inboxes.data() + mechanism * w, w);
+        for (std::size_t component = 0; component < d; ++component) {
+          const std::size_t row = mechanism * d + component;
+          ad::Var sum = parameter_var(
+              tape, *mechanism_bias_, mechanism * d + component);
+          sum = add_parameter_dot(tape, sum, *mechanism_embedding_, row,
+                                  embedding);
+          sum = add_parameter_dot(tape, sum, *mechanism_spine_, row,
+                                  state.spine);
+          sum = add_parameter_dot(tape, sum, *mechanism_recurrent_, row,
+                                  old_mechanism);
+          sum = add_parameter_dot(tape, sum, *mechanism_inbox_, row, inbox);
+          updated.push_back(ad::tanh(sum));
+        }
+        for (std::size_t component = 0; component < d; ++component) {
+          new_mechanisms[mechanism * d + component] = updated[component];
+        }
+
+        std::vector<ad::Var> message;
+        message.reserve(w);
+        for (std::size_t component = 0; component < w; ++component) {
+          const std::size_t row = mechanism * w + component;
+          ad::Var sum = parameter_var(
+              tape, *message_bias_, mechanism * w + component);
+          sum = add_parameter_dot(tape, sum, *message_state_, row, updated);
+          message.push_back(ad::tanh(sum));
+        }
+     

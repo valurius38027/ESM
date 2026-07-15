@@ -1,0 +1,85 @@
+ces = [
+            float(by_seed[seed][intervention]["holdout_nll"])
+            - float(by_seed[seed]["intact"]["holdout_nll"])
+            for seed in sorted(by_seed)
+        ]
+        accuracy_differences = [
+            float(by_seed[seed][intervention]["holdout_accuracy"])
+            - float(by_seed[seed]["intact"]["holdout_accuracy"])
+            for seed in sorted(by_seed)
+        ]
+        stats = paired_stats(nll_differences, replicates, index)
+        results.append(
+            {
+                "intervention": intervention,
+                "seeds": stats["seeds"],
+                "mean_nll_increase": stats["mean"],
+                "ci_lower": stats["ci_lower"],
+                "ci_upper": stats["ci_upper"],
+                "sd": stats["sd"],
+                "cohen_dz": stats["cohen_dz"],
+                "positive_seeds": stats["positive_seeds"],
+                "negative_seeds": stats["negative_seeds"],
+                "ties": stats["ties"],
+                "mean_accuracy_change": statistics.fmean(accuracy_differences),
+            }
+        )
+    return results
+
+
+def sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def main() -> None:
+    args = parse_args()
+    seeds = expected_seed_set(args.seed_start, args.seed_count)
+    run_rows = load_runs(args.raw_dir, seeds)
+    causal_rows = load_causal(args.causal_dir, seeds)
+    output = args.output_dir
+    output.mkdir(parents=True, exist_ok=True)
+
+    run_path = output / "phase2_runs.csv"
+    summary_path = output / "phase2_summary.csv"
+    paired_path = output / "phase2_paired.csv"
+    causal_path = output / "phase2_causal.csv"
+    causal_comparisons_path = output / "phase2_causal_comparisons.csv"
+
+    write_csv(run_path, run_rows)
+    write_csv(summary_path, summarize_runs(run_rows))
+    write_csv(paired_path, compare_runs(run_rows, args.bootstrap_replicates))
+    write_csv(causal_path, causal_rows)
+    write_csv(
+        causal_comparisons_path,
+        compare_causal(causal_rows, args.bootstrap_replicates),
+    )
+
+    data_paths = (
+        run_path,
+        summary_path,
+        paired_path,
+        causal_path,
+        causal_comparisons_path,
+    )
+    hashes = {path.name: sha256(path) for path in data_paths}
+    manifest = {
+        "analysis_seed": BASE_BOOTSTRAP_SEED,
+        "bootstrap_replicates": args.bootstrap_replicates,
+        "causal_rows": len(causal_rows),
+        "file_hashes": hashes,
+        "presets": list(PRESETS),
+        "run_rows": len(run_rows),
+        "seed_count": args.seed_count,
+        "seed_start": args.seed_start,
+    }
+    manifest_path = output / "phase2_manifest.json"
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
+
+    all_paths = sorted((*data_paths, manifest_path), key=lambda path: p

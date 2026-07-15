@@ -1,0 +1,92 @@
+ (selected.empty()) {
+    throw std::invalid_argument("selected route must not be empty");
+  }
+  double maximum = scores[selected.front()].value();
+  for (const std::size_t index : selected) {
+    maximum = std::max(maximum, scores[index].value());
+  }
+  const ad::Var maximum_constant = tape.constant(maximum);
+  std::vector<ad::Var> numerators;
+  numerators.reserve(selected.size());
+  ad::Var denominator = tape.constant(0.0);
+  for (const std::size_t index : selected) {
+    const ad::Var numerator = ad::exp(scores[index] - maximum_constant);
+    numerators.push_back(numerator);
+    denominator = denominator + numerator;
+  }
+  std::vector<ad::Var> weights;
+  weights.reserve(selected.size());
+  for (const ad::Var numerator : numerators) {
+    weights.push_back(numerator / denominator);
+  }
+  return weights;
+}
+
+}  // namespace
+
+std::string_view forward_intervention_name(
+    ForwardIntervention intervention) noexcept {
+  switch (intervention) {
+    case ForwardIntervention::intact:
+      return "intact";
+    case ForwardIntervention::no_broadcast:
+      return "no_broadcast";
+    case ForwardIntervention::no_workspace_persistence:
+      return "no_workspace_persistence";
+    case ForwardIntervention::no_workspace_output:
+      return "no_workspace_output";
+    case ForwardIntervention::permuted_recipients:
+      return "permuted_recipients";
+  }
+  return "unknown";
+}
+
+bool StepTrace::same_route(const StepTrace& other) const noexcept {
+  return active_mechanisms == other.active_mechanisms &&
+         writers == other.writers && writer_slots == other.writer_slots &&
+         recipients == other.recipients;
+}
+
+std::size_t estimated_step_madds(const ModelConfig& config) {
+  config.validate();
+  const std::size_t e = config.embedding_dim;
+  const std::size_t s = config.spine_dim;
+  const std::size_t m = config.mechanism_count;
+  const std::size_t d = config.mechanism_dim;
+  const std::size_t b = config.workspace_slots;
+  const std::size_t w = config.workspace_dim;
+  const std::size_t k = config.active_mechanisms;
+  const std::size_t q = config.workspace_writers;
+  const std::size_t c = config.output_classes;
+
+  std::size_t total = s * (e + s);
+  if (config.core_only) {
+    return total + c * s;
+  }
+  total += s * w;
+  total += m * (e + s + w + d);
+  total += k * d * (e + s + d + w);
+  total += k * w * d;
+  total += k * w;
+  total += q * b * w;
+  total += q * (2 * w * w + 2 * w);
+  total += m * w;
+  total += w * w;
+  total += c * (s + w + d);
+  return total;
+}
+
+SgwEsmModel::SgwEsmModel(ModelConfig config, std::uint64_t seed)
+    : config_(config) {
+  config_.validate();
+  std::mt19937_64 generator(seed);
+  const std::size_t e = config_.embedding_dim;
+  const std::size_t s = config_.spine_dim;
+  const std::size_t m = config_.mechanism_count;
+  const std::size_t d = config_.mechanism_dim;
+  const std::size_t b = config_.workspace_slots;
+  const std::size_t w = config_.workspace_dim;
+  const std::size_t c = config_.output_classes;
+
+  embedding_ =
+      &para

@@ -1,0 +1,10 @@
+ath.name)
+    checksum_path = output / "SHA256SUMS"
+    checksum_path.write_text(
+        "".join(f"{sha256(path)}  {path.name}\n" for path in all_paths),
+        encoding="utf-8",
+    )
+
+
+if __name__ == "__main__":
+    main()
