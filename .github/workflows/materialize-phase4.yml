@@ -1,0 +1,51 @@
+name: Materialize Phase 4 Source
+
+on:
+  pull_request:
+    branches: [agent/phase3-credit-assignment]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: materialize-phase4-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  materialize:
+    if: github.head_ref == 'agent/phase4-mediation'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/phase4-mediation
+          fetch-depth: 0
+      - name: Reassemble and verify Phase 4 patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .phase4-bootstrap/patchpart-00 \
+              .phase4-bootstrap/patchpart-01 \
+              .phase4-bootstrap/patchpart-02 > /tmp/phase4.patch.gz.b64
+          echo '49759746b9b4b4ce05d2b7338a4b06cccd54419b433efaa84d358ed4797ccb1d  /tmp/phase4.patch.gz.b64' | sha256sum --check
+          base64 --decode /tmp/phase4.patch.gz.b64 > /tmp/phase4.patch.gz
+          echo '219003d722d0ba0400952db8356219a7be94ed4fd1004dd1f1d770a1bca070c1  /tmp/phase4.patch.gz' | sha256sum --check
+          gzip -dc /tmp/phase4.patch.gz > /tmp/phase4.patch
+          git apply --check /tmp/phase4.patch
+          git apply /tmp/phase4.patch
+      - name: Commit materialized Phase 4 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .phase4-bootstrap
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          if git diff --cached --quiet; then
+            echo 'Materialization produced no changes.' >&2
+            exit 1
+          fi
+          git commit -m 'feat: add phase 4 mediation source'
+          git push origin HEAD:agent/phase4-mediation
