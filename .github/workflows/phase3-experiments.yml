@@ -1,0 +1,103 @@
+name: Phase 3 Credit Assignment Experiments
+
+on:
+  pull_request:
+    branches: [agent/phase2-experimental-controls]
+  workflow_dispatch:
+    inputs:
+      steps:
+        description: Training steps per condition
+        required: false
+        default: "400"
+      seed_count:
+        description: Total paired seeds; must be divisible by 6
+        required: false
+        default: "30"
+
+permissions:
+  contents: read
+
+jobs:
+  shard:
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'agent/phase3-credit-assignment'
+    name: Seeds ${{ matrix.shard }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure release build
+        run: cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build-release --parallel 2
+      - name: Run paired shard
+        env:
+          REQUESTED_STEPS: ${{ inputs.steps || '400' }}
+          REQUESTED_SEEDS: ${{ inputs.seed_count || '30' }}
+          SHARD_INDEX: ${{ matrix.shard }}
+        run: |
+          if (( REQUESTED_SEEDS % 6 != 0 )); then
+            echo "seed_count must be divisible by 6" >&2
+            exit 2
+          fi
+          per_shard=$((REQUESTED_SEEDS / 6))
+          seed_start=$((SHARD_INDEX * per_shard))
+          scripts/run_phase3_shard.sh \
+            build-release "$seed_start" "$per_shard" "$REQUESTED_STEPS" \
+            8 160 48 results/phase3-shard
+      - name: Upload shard
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase3-shard-${{ matrix.shard }}
+          path: results/phase3-shard/
+          if-no-files-found: error
+          retention-days: 30
+
+  aggregate:
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'agent/phase3-credit-assignment'
+    name: Aggregate formal results
+    needs: shard
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all shards
+        uses: actions/download-artifact@v4
+        with:
+          pattern: phase3-shard-*
+          path: results/merged-phase3
+          merge-multiple: true
+      - name: Aggregate
+        env:
+          REQUESTED_SEEDS: ${{ inputs.seed_count || '30' }}
+        run: |
+          python3 scripts/aggregate_phase3.py \
+            --raw-dir results/merged-phase3/raw \
+            --causal-dir results/merged-phase3/causal \
+            --output-dir results/phase3-formal \
+            --seed-start 0 --seed-count "$REQUESTED_SEEDS" \
+            --bootstrap-replicates 50000
+          cat results/phase3-formal/phase3_summary.csv >> "$GITHUB_STEP_SUMMARY"
+          printf '\n' >> "$GITHUB_STEP_SUMMARY"
+          cat results/phase3-formal/phase3_paired.csv >> "$GITHUB_STEP_SUMMARY"
+          printf '\n' >> "$GITHUB_STEP_SUMMARY"
+          cat results/phase3-formal/phase3_causal_comparisons.csv >> "$GITHUB_STEP_SUMMARY"
+          printf '\n' >> "$GITHUB_STEP_SUMMARY"
+          cat results/phase3-formal/phase3_routing.csv >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify checksums
+        working-directory: results/phase3-formal
+        run: sha256sum --check SHA256SUMS
+      - name: Upload formal results
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase3-formal-results
+          path: |
+            results/phase3-formal/
+            results/merged-phase3/raw/
+            results/merged-phase3/causal/
+            results/merged-phase3/logs/
+          if-no-files-found: error
+          retention-days: 90
