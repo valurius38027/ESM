@@ -1,21 +1,19 @@
 name: Materialize Phase 3 Source
 
 on:
-  push:
-    branches: [agent/phase3-credit-assignment]
-    paths:
-      - '.phase3-bootstrap/**'
-      - '.github/workflows/materialize-phase3.yml'
+  pull_request:
+    branches: [agent/phase2-experimental-controls]
 
 permissions:
   contents: write
 
 concurrency:
-  group: materialize-phase3-${{ github.ref }}
+  group: materialize-phase3-${{ github.event.pull_request.number }}
   cancel-in-progress: false
 
 jobs:
   materialize:
+    if: github.head_ref == 'agent/phase3-credit-assignment'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
