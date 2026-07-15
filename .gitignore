@@ -1,0 +1,12 @@
+/build/
+/build-*/
+/.worktrees/
+/results/raw/
+*.profraw
+*.profdata
+compile_commands.json
+__pycache__/
+*.pyc
+/results/phase2-shard/
+/results/phase2-formal/
+/results/merged/

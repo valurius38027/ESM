@@ -1,0 +1,121 @@
+#include "test_harness.hpp"
+
+#include "sgw/dataset.hpp"
+
+#include <set>
+#include <sstream>
+#include <string>
+
+namespace {
+
+std::string serialize(const sgw::BindingSample& sample) {
+  std::ostringstream stream;
+  for (const int token : sample.tokens) {
+    stream << token << ',';
+  }
+  stream << '|' << sample.target_class;
+  return stream.str();
+}
+
+void verify_sample(const sgw::BindingDataset& dataset,
+                   const sgw::BindingSample& sample) {
+  SGW_REQUIRE(sample.tokens.size() == dataset.config.sequence_length());
+  SGW_REQUIRE(sample.target_class < dataset.config.value_count);
+  SGW_REQUIRE(sample.queried_entity < dataset.config.entity_count);
+  SGW_REQUIRE(sample.source_value_position == sample.source_entity_position + 1);
+  SGW_REQUIRE(sample.query_entity_position + 1 == sample.tokens.size());
+  SGW_REQUIRE(sample.tokens[sample.source_entity_position] ==
+              dataset.vocabulary.entity_token(sample.queried_entity));
+  SGW_REQUIRE(sample.tokens[sample.source_value_position] ==
+              dataset.vocabulary.value_token(sample.target_class));
+  SGW_REQUIRE(sample.tokens[sample.tokens.size() - 2] ==
+              dataset.vocabulary.query_token());
+  SGW_REQUIRE(sample.tokens[sample.query_entity_position] ==
+              dataset.vocabulary.entity_token(sample.queried_entity));
+
+  std::size_t binding_occurrences = 0;
+  const std::size_t stride = 2 + dataset.config.fillers_per_binding;
+  for (std::size_t binding = 0; binding < dataset.config.binding_count;
+       ++binding) {
+    const std::size_t entity_position = binding * stride;
+    if (sample.tokens[entity_position] ==
+        dataset.vocabulary.entity_token(sample.queried_entity)) {
+      ++binding_occurrences;
+    }
+    for (std::size_t filler = 0;
+         filler < dataset.config.fillers_per_binding; ++filler) {
+      const int token = sample.tokens[entity_position + 2 + filler];
+      SGW_REQUIRE(token >= dataset.vocabulary.filler_token(0));
+      SGW_REQUIRE(token < dataset.vocabulary.query_token());
+    }
+  }
+  SGW_REQUIRE(binding_occurrences == 1);
+
+  for (const int token : sample.tokens) {
+    SGW_REQUIRE(token >= 0);
+    SGW_REQUIRE(static_cast<std::size_t>(token) < dataset.vocabulary.size());
+  }
+}
+
+}  // namespace
+
+SGW_TEST(binding_split_is_identifiable_unique_and_disjoint) {
+  sgw::BindingTaskConfig config;
+  config.entity_count = 5;
+  config.value_count = 4;
+  config.filler_count = 3;
+  config.binding_count = 3;
+  config.fillers_per_binding = 2;
+  const auto dataset = sgw::make_binding_split(config, 40, 20, 9123);
+
+  SGW_REQUIRE(dataset.train.size() == 40);
+  SGW_REQUIRE(dataset.holdout.size() == 20);
+  SGW_REQUIRE(dataset.vocabulary.size() == 13);
+
+  std::set<std::string> train_sequences;
+  std::set<std::string> holdout_sequences;
+  for (const auto& sample : dataset.train) {
+    verify_sample(dataset, sample);
+    SGW_REQUIRE(train_sequences.insert(serialize(sample)).second);
+  }
+  for (const auto& sample : dataset.holdout) {
+    verify_sample(dataset, sample);
+    SGW_REQUIRE(holdout_sequences.insert(serialize(sample)).second);
+    SGW_REQUIRE(!train_sequences.contains(serialize(sample)));
+  }
+}
+
+SGW_TEST(binding_split_is_byte_deterministic_for_fixed_seed) {
+  sgw::BindingTaskConfig config;
+  const auto first = sgw::make_binding_split(config, 12, 7, 44);
+  const auto second = sgw::make_binding_split(config, 12, 7, 44);
+  SGW_REQUIRE(first.train.size() == second.train.size());
+  SGW_REQUIRE(first.holdout.size() == second.holdout.size());
+  for (std::size_t index = 0; index < first.train.size(); ++index) {
+    SGW_REQUIRE(serialize(first.train[index]) == serialize(second.train[index]));
+  }
+  for (std::size_t index = 0; index < first.holdout.size(); ++index) {
+    SGW_REQUIRE(serialize(first.holdout[index]) ==
+                serialize(second.holdout[index]));
+  }
+}
+
+SGW_TEST(binding_task_rejects_impossible_or_empty_configuration) {
+  sgw::BindingTaskConfig config;
+  config.validate();
+
+  auto invalid = config;
+  invalid.entity_count = 0;
+  SGW_REQUIRE_THROWS(invalid.validate());
+
+  invalid = config;
+  invalid.binding_count = config.entity_count + 1;
+  SGW_REQUIRE_THROWS(invalid.validate());
+
+  invalid = config;
+  invalid.filler_count = 0;
+  SGW_REQUIRE_THROWS(invalid.validate());
+
+  SGW_REQUIRE_THROWS(sgw::make_binding_split(config, 0, 2, 1));
+  SGW_REQUIRE_THROWS(sgw::make_binding_split(config, 2, 0, 1));
+}
