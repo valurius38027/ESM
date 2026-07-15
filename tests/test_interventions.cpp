@@ -127,3 +127,67 @@ SGW_TEST(permuted_recipients_cyclically_shift_effective_addresses) {
     }
   }
 }
+
+SGW_TEST(no_spine_workspace_matches_equivalent_static_configuration) {
+  const auto redundant =
+      sgw::make_model_config(sgw::ModelPreset::sgw_redundant);
+  auto static_disabled = redundant;
+  static_disabled.spine_reads_workspace = false;
+  sgw::SgwEsmModel intervention_model(redundant, 43);
+  sgw::SgwEsmModel static_model(static_disabled, 43);
+  const std::vector<int> tokens{0, 6, 12, 4, 7, 13, 1};
+  sgw::ad::Tape intervention_tape;
+  sgw::ad::Tape static_tape;
+  const auto intervention = intervention_model.forward_sequence(
+      intervention_tape, tokens, true,
+      sgw::ForwardIntervention::no_spine_workspace);
+  const auto configured = static_model.forward_sequence(static_tape, tokens,
+                                                        true);
+  SGW_REQUIRE(logits_of(intervention) == logits_of(configured));
+  SGW_REQUIRE(sgw::same_route_trace(intervention.traces,
+                                    configured.traces));
+}
+
+SGW_TEST(no_mechanism_output_matches_equivalent_static_configuration) {
+  const auto redundant =
+      sgw::make_model_config(sgw::ModelPreset::sgw_redundant);
+  auto static_disabled = redundant;
+  static_disabled.output_reads_mechanism = false;
+  sgw::SgwEsmModel intervention_model(redundant, 47);
+  sgw::SgwEsmModel static_model(static_disabled, 47);
+  const std::vector<int> tokens{0, 6, 12, 4, 7, 13, 1};
+  sgw::ad::Tape intervention_tape;
+  sgw::ad::Tape static_tape;
+  const auto intervention = intervention_model.forward_sequence(
+      intervention_tape, tokens, true,
+      sgw::ForwardIntervention::no_mechanism_output);
+  const auto configured = static_model.forward_sequence(static_tape, tokens,
+                                                        true);
+  SGW_REQUIRE(logits_of(intervention) == logits_of(configured));
+  SGW_REQUIRE(sgw::same_route_trace(intervention.traces,
+                                    configured.traces));
+}
+
+SGW_TEST(workspace_disconnected_matches_all_workspace_reads_disabled) {
+  const auto redundant =
+      sgw::make_model_config(sgw::ModelPreset::sgw_redundant);
+  auto static_disabled = redundant;
+  static_disabled.spine_reads_workspace = false;
+  static_disabled.output_reads_workspace = false;
+  sgw::SgwEsmModel disconnected_model(redundant, 53);
+  sgw::SgwEsmModel static_model(static_disabled, 53);
+  const std::vector<int> tokens{0, 6, 12, 4, 7, 13, 1};
+  sgw::ad::Tape disconnected_tape;
+  sgw::ad::Tape static_tape;
+  const auto disconnected = disconnected_model.forward_sequence(
+      disconnected_tape, tokens, true,
+      sgw::ForwardIntervention::workspace_disconnected);
+  const auto configured = static_model.forward_sequence(
+      static_tape, tokens, true, sgw::ForwardIntervention::no_broadcast);
+  SGW_REQUIRE(logits_of(disconnected) == logits_of(configured));
+  SGW_REQUIRE(sgw::same_route_trace(disconnected.traces,
+                                    configured.traces));
+  for (const auto& trace : disconnected.traces) {
+    SGW_REQUIRE(trace.inbox_before == trace.inbox_after);
+  }
+}

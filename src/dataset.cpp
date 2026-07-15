@@ -79,19 +79,23 @@ BindingSample make_sample(const BindingTaskConfig& config,
       bounded_random(generator, config.binding_count);
   BindingSample sample;
   sample.tokens.reserve(config.sequence_length());
+  sample.roles.reserve(config.sequence_length());
   sample.queried_entity = entities[queried_binding];
 
   const std::size_t stride = 2 + config.fillers_per_binding;
   for (std::size_t binding = 0; binding < config.binding_count; ++binding) {
     const std::size_t entity_position = sample.tokens.size();
     sample.tokens.push_back(vocabulary.entity_token(entities[binding]));
+    sample.roles.push_back(TokenRole::entity);
     const std::size_t value = bounded_random(generator, config.value_count);
     sample.tokens.push_back(vocabulary.value_token(value));
+    sample.roles.push_back(TokenRole::value);
     for (std::size_t filler = 0; filler < config.fillers_per_binding;
          ++filler) {
       const std::size_t filler_id =
           bounded_random(generator, config.filler_count);
       sample.tokens.push_back(vocabulary.filler_token(filler_id));
+      sample.roles.push_back(TokenRole::filler);
     }
     if (binding == queried_binding) {
       sample.target_class = value;
@@ -104,12 +108,36 @@ BindingSample make_sample(const BindingTaskConfig& config,
     throw std::logic_error("binding sample body has incorrect length");
   }
   sample.tokens.push_back(vocabulary.query_token());
+  sample.roles.push_back(TokenRole::query_marker);
   sample.query_entity_position = sample.tokens.size();
   sample.tokens.push_back(vocabulary.entity_token(sample.queried_entity));
+  sample.roles.push_back(TokenRole::query_entity);
+  if (sample.roles.size() != sample.tokens.size()) {
+    throw std::logic_error("binding sample role sequence has incorrect length");
+  }
   return sample;
 }
 
 }  // namespace
+
+
+std::string_view token_role_name(TokenRole role) noexcept {
+  switch (role) {
+    case TokenRole::entity:
+      return "entity";
+    case TokenRole::value:
+      return "value";
+    case TokenRole::filler:
+      return "filler";
+    case TokenRole::query_marker:
+      return "query_marker";
+    case TokenRole::query_entity:
+      return "query_entity";
+    case TokenRole::count:
+      return "count";
+  }
+  return "unknown";
+}
 
 void BindingTaskConfig::validate() const {
   require_positive(entity_count, "entity_count");

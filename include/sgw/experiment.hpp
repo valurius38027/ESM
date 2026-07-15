@@ -16,6 +16,8 @@ struct TrainingConfig {
   std::size_t steps{100};
   std::size_t batch_size{8};
   std::uint64_t shuffle_seed{1};
+  double workspace_aux_weight{0.0};
+  std::size_t workspace_aux_anneal_steps{0};
 
   void validate() const;
 };
@@ -28,13 +30,21 @@ struct EvaluationMetrics {
   double mean_writers_per_token{0.0};
   double mean_recipients_per_token{0.0};
   std::vector<std::size_t> mechanism_load;
+  std::vector<std::size_t> role_mechanism_load;
 };
 
 struct TrainingHistory {
   std::vector<double> batch_loss;
+  std::vector<double> primary_batch_loss;
+  std::vector<double> workspace_aux_batch_loss;
+  std::vector<double> workspace_aux_weight;
   std::vector<double> gradient_norm;
   std::vector<double> clip_scale;
 };
+
+[[nodiscard]] double workspace_aux_weight_at_step(
+    const TrainingConfig& config,
+    std::size_t step);
 
 [[nodiscard]] ad::Var cross_entropy_loss(
     ad::Tape& tape,

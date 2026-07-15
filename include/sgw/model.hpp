@@ -17,6 +17,9 @@ enum class ForwardIntervention {
   no_broadcast,
   no_workspace_persistence,
   no_workspace_output,
+  no_spine_workspace,
+  no_mechanism_output,
+  workspace_disconnected,
   permuted_recipients,
 };
 
@@ -49,6 +52,7 @@ struct StepTrace {
 
 struct SequenceResult {
   std::vector<ad::Var> logits;
+  std::vector<ad::Var> workspace_aux_logits;
   ModelState final_state;
   std::vector<StepTrace> traces;
 };

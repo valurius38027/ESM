@@ -20,6 +20,7 @@ std::string serialize(const sgw::BindingSample& sample) {
 void verify_sample(const sgw::BindingDataset& dataset,
                    const sgw::BindingSample& sample) {
   SGW_REQUIRE(sample.tokens.size() == dataset.config.sequence_length());
+  SGW_REQUIRE(sample.roles.size() == sample.tokens.size());
   SGW_REQUIRE(sample.target_class < dataset.config.value_count);
   SGW_REQUIRE(sample.queried_entity < dataset.config.entity_count);
   SGW_REQUIRE(sample.source_value_position == sample.source_entity_position + 1);
@@ -38,18 +39,28 @@ void verify_sample(const sgw::BindingDataset& dataset,
   for (std::size_t binding = 0; binding < dataset.config.binding_count;
        ++binding) {
     const std::size_t entity_position = binding * stride;
+    SGW_REQUIRE(sample.roles[entity_position] == sgw::TokenRole::entity);
+    SGW_REQUIRE(sample.roles[entity_position + 1] == sgw::TokenRole::value);
     if (sample.tokens[entity_position] ==
         dataset.vocabulary.entity_token(sample.queried_entity)) {
       ++binding_occurrences;
     }
     for (std::size_t filler = 0;
          filler < dataset.config.fillers_per_binding; ++filler) {
-      const int token = sample.tokens[entity_position + 2 + filler];
+      const std::size_t filler_position = entity_position + 2 + filler;
+      const int token = sample.tokens[filler_position];
+      SGW_REQUIRE(sample.roles[filler_position] == sgw::TokenRole::filler);
       SGW_REQUIRE(token >= dataset.vocabulary.filler_token(0));
       SGW_REQUIRE(token < dataset.vocabulary.query_token());
     }
   }
   SGW_REQUIRE(binding_occurrences == 1);
+  SGW_REQUIRE(sample.roles[sample.tokens.size() - 2] ==
+              sgw::TokenRole::query_marker);
+  SGW_REQUIRE(sample.roles[sample.query_entity_position] ==
+              sgw::TokenRole::query_entity);
+  SGW_REQUIRE(sgw::token_role_name(sgw::TokenRole::query_entity) ==
+              std::string_view("query_entity"));
 
   for (const int token : sample.tokens) {
     SGW_REQUIRE(token >= 0);

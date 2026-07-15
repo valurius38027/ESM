@@ -23,7 +23,9 @@
 namespace {
 
 struct Options {
-  sgw::ModelPreset preset{sgw::ModelPreset::sgw};
+  sgw::ExperimentCondition condition{
+      sgw::ExperimentCondition::sgw_redundant_final_only};
+  sgw::ModelPreset preset{sgw::ModelPreset::sgw_redundant};
   std::uint64_t seed{1};
   std::size_t steps{80};
   std::size_t batch_size{6};
@@ -54,14 +56,35 @@ Integer parse_integer(std::string_view text, const char* option) {
   return value;
 }
 
+sgw::ExperimentCondition default_condition_for_preset(
+    sgw::ModelPreset preset) noexcept {
+  switch (preset) {
+    case sgw::ModelPreset::core_small:
+      return sgw::ExperimentCondition::core_small;
+    case sgw::ModelPreset::core_compute_matched:
+      return sgw::ExperimentCondition::core_compute_matched;
+    case sgw::ModelPreset::core_param_matched:
+      return sgw::ExperimentCondition::core_param_matched;
+    case sgw::ModelPreset::sgw_redundant:
+      return sgw::ExperimentCondition::sgw_redundant_final_only;
+    case sgw::ModelPreset::sgw_broadcast_forced:
+      return sgw::ExperimentCondition::sgw_broadcast_forced_final_only;
+  }
+  return sgw::ExperimentCondition::core_small;
+}
+
 Options parse_options(int argc, char** argv) {
   Options options;
   for (int index = 1; index < argc; ++index) {
     const std::string_view argument(argv[index]);
     if (argument == "--help") {
       std::cout
-          << "Usage: sgw_train [--preset core_small|core_compute_matched|"
-             "core_param_matched|sgw] [--mode core_only|sgw] [--seed N] "
+          << "Usage: sgw_train [--condition core_small|"
+             "core_compute_matched|core_param_matched|"
+             "sgw_redundant_final_only|sgw_broadcast_forced_final_only|"
+             "sgw_broadcast_forced_aux_annealed] "
+             "[--preset core_small|core_compute_matched|core_param_matched|"
+             "sgw|sgw_broadcast_forced] [--mode core_only|sgw] [--seed N] "
              "[--steps N] [--batch-size N] [--train-count N] "
              "[--holdout-count N] [--output PATH] "
              "[--causal-output PATH]\n";
@@ -71,10 +94,15 @@ Options parse_options(int argc, char** argv) {
       usage_error("missing value for " + std::string(argument));
     }
     const std::string_view value(argv[++index]);
-    if (argument == "--preset") {
+    if (argument == "--condition") {
+      options.condition = sgw::parse_experiment_condition(value);
+      options.preset = sgw::model_preset_for_condition(options.condition);
+    } else if (argument == "--preset") {
       options.preset = sgw::parse_model_preset(value);
+      options.condition = default_condition_for_preset(options.preset);
     } else if (argument == "--mode") {
       options.preset = sgw::parse_model_preset(value);
+      options.condition = default_condition_for_preset(options.preset);
     } else if (argument == "--seed") {
       options.seed = parse_integer<std::uint64_t>(value, "--seed");
     } else if (argument == "--steps") {
@@ -101,8 +129,10 @@ Options parse_options(int argc, char** argv) {
     usage_error("steps, batch size and split sizes must be positive");
   }
   if (options.causal_output.has_value() &&
-      options.preset != sgw::ModelPreset::sgw) {
-    usage_error("--causal-output requires --preset sgw");
+      (options.preset == sgw::ModelPreset::core_small ||
+       options.preset == sgw::ModelPreset::core_compute_matched ||
+       options.preset == sgw::ModelPreset::core_param_matched)) {
+    usage_error("--causal-output requires an SGW condition");
   }
   return options;
 }
@@ -138,6 +168,33 @@ std::string mechanism_load_text(const std::vector<std::size_t>& load) {
   return text;
 }
 
+std::string role_mechanism_load_text(
+    const std::vector<std::size_t>& load,
+    std::size_t mechanism_count) {
+  const std::size_t role_count =
+      static_cast<std::size_t>(sgw::TokenRole::count);
+  if (mechanism_count == 0 || load.size() != role_count * mechanism_count) {
+    throw std::invalid_argument(
+        "role mechanism load shape does not match model configuration");
+  }
+  std::string text;
+  for (std::size_t role = 0; role < role_count; ++role) {
+    if (role != 0) {
+      text.push_back('|');
+    }
+    text += sgw::token_role_name(static_cast<sgw::TokenRole>(role));
+    text.push_back(':');
+    for (std::size_t mechanism = 0; mechanism < mechanism_count;
+         ++mechanism) {
+      if (mechanism != 0) {
+        text.push_back(';');
+      }
+      text += std::to_string(load[role * mechanism_count + mechanism]);
+    }
+  }
+  return text;
+}
+
 void prepare_parent(const std::filesystem::path& path) {
   if (!path.parent_path().empty()) {
     std::filesystem::create_directories(path.parent_path());
@@ -164,7 +221,10 @@ void write_primary_csv(const Options& options,
          "final_holdout_accuracy,mean_estimated_madds_per_token,"
          "mean_active_mechanisms_per_token,mean_writers_per_token,"
          "mean_recipients_per_token,first_window_loss,last_window_loss,"
-         "mechanism_load\n";
+         "mechanism_load,role_mechanism_load,condition,"
+         "workspace_aux_initial_weight,workspace_aux_anneal_steps,"
+         "first_primary_window_loss,last_primary_window_loss,"
+         "last_workspace_aux_window_loss\n";
   output << std::fixed << std::setprecision(12)
          << sgw::model_preset_name(options.preset) << ',' << options.seed << ','
          << options.steps << ',' << options.batch_size << ','
@@ -181,20 +241,35 @@ void write_primary_csv(const Options& options,
          << final_holdout.mean_recipients_per_token << ','
          << window_mean(history.batch_loss, true) << ','
          << window_mean(history.batch_loss, false) << ','
-         << mechanism_load_text(final_holdout.mechanism_load) << '\n';
+         << mechanism_load_text(final_holdout.mechanism_load) << ','
+         << role_mechanism_load_text(final_holdout.role_mechanism_load,
+                                     model.config().mechanism_count)
+         << ',' << sgw::experiment_condition_name(options.condition) << ','
+         << sgw::condition_workspace_aux_weight(options.condition) << ','
+         << sgw::condition_workspace_aux_anneal_steps(options.condition) << ','
+         << window_mean(history.primary_batch_loss, true) << ','
+         << window_mean(history.primary_batch_loss, false) << ','
+         << window_mean(history.workspace_aux_batch_loss, false) << '\n';
 }
 
-void write_causal_csv(const std::filesystem::path& path, std::uint64_t seed,
-                      sgw::SgwEsmModel& model,
+void write_causal_csv(const Options& options, sgw::SgwEsmModel& model,
                       const sgw::BindingDataset& dataset) {
-  constexpr std::array interventions{
+  const std::filesystem::path& path = *options.causal_output;
+  const std::uint64_t seed = options.seed;
+  std::vector<sgw::ForwardIntervention> interventions{
       sgw::ForwardIntervention::intact,
       sgw::ForwardIntervention::no_broadcast,
       sgw::ForwardIntervention::no_workspace_persistence,
       sgw::ForwardIntervention::no_workspace_output,
-      sgw::ForwardIntervention::permuted_recipients,
   };
-  std::array<sgw::EvaluationMetrics, interventions.size()> metrics;
+  if (!model.config().spine_reads_workspace &&
+      !model.config().output_reads_workspace) {
+    interventions.push_back(sgw::ForwardIntervention::no_spine_workspace);
+    interventions.push_back(sgw::ForwardIntervention::no_mechanism_output);
+    interventions.push_back(sgw::ForwardIntervention::workspace_disconnected);
+  }
+  interventions.push_back(sgw::ForwardIntervention::permuted_recipients);
+  std::vector<sgw::EvaluationMetrics> metrics(interventions.size());
   for (std::size_t index = 0; index < interventions.size(); ++index) {
     metrics[index] =
         sgw::evaluate(model, dataset.holdout, true, interventions[index]);
@@ -210,7 +285,8 @@ void write_causal_csv(const std::filesystem::path& path, std::uint64_t seed,
       << "seed,intervention,holdout_nll,holdout_accuracy,"
          "nll_delta_vs_intact,accuracy_delta_vs_intact,"
          "mean_active_mechanisms_per_token,mean_writers_per_token,"
-         "mean_recipients_per_token,mechanism_load\n";
+         "mean_recipients_per_token,mechanism_load,role_mechanism_load,"
+         "condition\n";
   output << std::fixed << std::setprecision(12);
   for (std::size_t index = 0; index < interventions.size(); ++index) {
     const auto& current = metrics[index];
@@ -221,7 +297,11 @@ void write_causal_csv(const std::filesystem::path& path, std::uint64_t seed,
            << current.mean_active_mechanisms_per_token << ','
            << current.mean_writers_per_token << ','
            << current.mean_recipients_per_token << ','
-           << mechanism_load_text(current.mechanism_load) << '\n';
+           << mechanism_load_text(current.mechanism_load) << ','
+           << role_mechanism_load_text(current.role_mechanism_load,
+                                       model.config().mechanism_count)
+           << ',' << sgw::experiment_condition_name(options.condition)
+           << '\n';
   }
 }
 
@@ -245,6 +325,10 @@ int main(int argc, char** argv) {
     training.steps = options.steps;
     training.batch_size = options.batch_size;
     training.shuffle_seed = options.seed ^ 0xd1b54a32d192ed03ULL;
+    training.workspace_aux_weight =
+        sgw::condition_workspace_aux_weight(options.condition);
+    training.workspace_aux_anneal_steps =
+        sgw::condition_workspace_aux_anneal_steps(options.condition);
 
     const auto initial_train = sgw::evaluate(model, dataset.train, false);
     const auto initial_holdout = sgw::evaluate(model, dataset.holdout, false);
@@ -255,7 +339,7 @@ int main(int argc, char** argv) {
     write_primary_csv(options, dataset, model, initial_train, initial_holdout,
                       final_train, final_holdout, history);
     if (options.causal_output.has_value()) {
-      write_causal_csv(*options.causal_output, options.seed, model, dataset);
+      write_causal_csv(options, model, dataset);
     }
 
     const double elapsed = std::chrono::duration<double>(

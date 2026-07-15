@@ -17,6 +17,9 @@ struct ModelConfig {
   std::size_t workspace_writers{1};
   std::size_t broadcast_recipients{2};
   bool core_only{false};
+  bool spine_reads_workspace{true};
+  bool output_reads_workspace{true};
+  bool output_reads_mechanism{true};
 
   void validate() const;
 };
