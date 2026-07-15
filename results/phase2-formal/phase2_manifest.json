@@ -1,0 +1,21 @@
+{
+  "analysis_seed": 20260715,
+  "bootstrap_replicates": 50000,
+  "causal_rows": 150,
+  "file_hashes": {
+    "phase2_causal.csv": "1e71af60aba5b3c2020ee918dee333da476461b140f01eb24310328399f2ea8e",
+    "phase2_causal_comparisons.csv": "a7a66c47c24a29dcb15635c16f513d9efc85c1e8b23517d18c469fa612d90363",
+    "phase2_paired.csv": "c75da37e5ed22bbdf0bd467364b5eafa247799fa87f6ce36c6f91c89d35b9ea5",
+    "phase2_runs.csv": "db0739dd337f8f0f16fe2183d809e840d382b6faf0a4d820690cfd89f786d231",
+    "phase2_summary.csv": "e02be20400d36dd49ec983bbf7e515117a8f9d4c7992ba14075615a0972c4e2c"
+  },
+  "presets": [
+    "core_small",
+    "core_compute_matched",
+    "core_param_matched",
+    "sgw"
+  ],
+  "run_rows": 120,
+  "seed_count": 30,
+  "seed_start": 0
+}
