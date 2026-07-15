@@ -40,7 +40,7 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf .phase3-bootstrap
-          rm -f .github/workflows/materialize-phase3.yml
+          rm -f .github/workflows/phase3-experiments.yml
           git diff --check
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
@@ -49,5 +49,5 @@ jobs:
             echo 'Materialization produced no changes.' >&2
             exit 1
           fi
-          git commit -m 'feat: add phase 3 credit assignment experiments'
+          git commit -m 'feat: add phase 3 credit assignment source'
           git push origin HEAD:agent/phase3-credit-assignment
