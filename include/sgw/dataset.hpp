@@ -2,9 +2,21 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string_view>
 #include <vector>
 
 namespace sgw {
+
+enum class TokenRole : std::size_t {
+  entity = 0,
+  value = 1,
+  filler = 2,
+  query_marker = 3,
+  query_entity = 4,
+  count = 5,
+};
+
+[[nodiscard]] std::string_view token_role_name(TokenRole role) noexcept;
 
 struct BindingTaskConfig {
   std::size_t entity_count{6};
@@ -31,6 +43,7 @@ struct BindingVocabulary {
 
 struct BindingSample {
   std::vector<int> tokens;
+  std::vector<TokenRole> roles;
   std::size_t target_class{0};
   std::size_t queried_entity{0};
   std::size_t source_entity_position{0};

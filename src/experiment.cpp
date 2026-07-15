@@ -71,6 +71,27 @@ void TrainingConfig::validate() const {
   if (batch_size == 0) {
     throw std::invalid_argument("batch size must be positive");
   }
+  if (!std::isfinite(workspace_aux_weight) || workspace_aux_weight < 0.0) {
+    throw std::invalid_argument(
+        "workspace auxiliary weight must be finite and non-negative");
+  }
+  if (workspace_aux_weight > 0.0 && workspace_aux_anneal_steps == 0) {
+    throw std::invalid_argument(
+        "positive workspace auxiliary weight requires anneal steps");
+  }
+}
+
+double workspace_aux_weight_at_step(const TrainingConfig& config,
+                                    std::size_t step) {
+  config.validate();
+  if (config.workspace_aux_weight == 0.0 ||
+      step >= config.workspace_aux_anneal_steps) {
+    return 0.0;
+  }
+  const double fraction =
+      1.0 - static_cast<double>(step) /
+                static_cast<double>(config.workspace_aux_anneal_steps);
+  return config.workspace_aux_weight * fraction;
 }
 
 ad::Var cross_entropy_loss(ad::Tape& tape, std::span<const ad::Var> logits,
@@ -115,6 +136,10 @@ EvaluationMetrics evaluate(SgwEsmModel& model,
   }
   EvaluationMetrics metrics;
   metrics.mechanism_load.assign(model.config().mechanism_count, 0);
+  const std::size_t role_count =
+      static_cast<std::size_t>(TokenRole::count);
+  metrics.role_mechanism_load.assign(
+      role_count * model.config().mechanism_count, 0);
   double total_nll = 0.0;
   std::size_t correct = 0;
   long double total_madds = 0.0L;
@@ -137,12 +162,24 @@ EvaluationMetrics evaluate(SgwEsmModel& model,
     total_madds += static_cast<long double>(
         estimated_step_madds(model.config()) * sample.tokens.size());
     if (collect_routes) {
-      for (const StepTrace& trace : result.traces) {
+      if (sample.roles.size() != result.traces.size()) {
+        throw std::logic_error(
+            "sample role count must match captured route trace count");
+      }
+      for (std::size_t step = 0; step < result.traces.size(); ++step) {
+        const StepTrace& trace = result.traces[step];
         total_active += trace.active_mechanisms.size();
         total_writers += trace.writers.size();
         total_recipients += trace.recipients.size();
+        const std::size_t role =
+            static_cast<std::size_t>(sample.roles[step]);
+        if (role >= role_count) {
+          throw std::logic_error("invalid token role in evaluation sample");
+        }
         for (const std::size_t mechanism : trace.active_mechanisms) {
           ++metrics.mechanism_load.at(mechanism);
+          ++metrics.role_mechanism_load.at(
+              role * model.config().mechanism_count + mechanism);
         }
       }
     }
@@ -177,6 +214,9 @@ TrainingHistory train_steps(SgwEsmModel& model,
   Adam optimizer(adam_config);
   TrainingHistory history;
   history.batch_loss.reserve(training_config.steps);
+  history.primary_batch_loss.reserve(training_config.steps);
+  history.workspace_aux_batch_loss.reserve(training_config.steps);
+  history.workspace_aux_weight.reserve(training_config.steps);
   history.gradient_norm.reserve(training_config.steps);
   history.clip_scale.reserve(training_config.steps);
 
@@ -188,7 +228,11 @@ TrainingHistory train_steps(SgwEsmModel& model,
 
   for (std::size_t step = 0; step < training_config.steps; ++step) {
     model.parameters().zero_grad();
+    const double auxiliary_weight =
+        workspace_aux_weight_at_step(training_config, step);
     double loss_sum = 0.0;
+    double primary_loss_sum = 0.0;
+    double auxiliary_loss_sum = 0.0;
     for (std::size_t batch_index = 0;
          batch_index < training_config.batch_size; ++batch_index) {
       if (cursor == order.size()) {
@@ -199,10 +243,25 @@ TrainingHistory train_steps(SgwEsmModel& model,
       ad::Tape tape;
       const SequenceResult result =
           model.forward_sequence(tape, sample.tokens, false);
-      const ad::Var loss =
+      const ad::Var primary_loss =
           cross_entropy_loss(tape, result.logits, sample.target_class);
-      loss_sum += loss.value();
-      tape.backward(loss);
+      ad::Var total_loss = primary_loss;
+      double auxiliary_loss_value = 0.0;
+      if (auxiliary_weight > 0.0) {
+        if (result.workspace_aux_logits.empty()) {
+          throw std::invalid_argument(
+              "workspace auxiliary loss requires an SGW model");
+        }
+        const ad::Var auxiliary_loss = cross_entropy_loss(
+            tape, result.workspace_aux_logits, sample.target_class);
+        auxiliary_loss_value = auxiliary_loss.value();
+        total_loss = total_loss +
+                     tape.constant(auxiliary_weight) * auxiliary_loss;
+      }
+      primary_loss_sum += primary_loss.value();
+      auxiliary_loss_sum += auxiliary_loss_value;
+      loss_sum += total_loss.value();
+      tape.backward(total_loss);
     }
 
     const double inverse_batch =
@@ -216,6 +275,9 @@ TrainingHistory train_steps(SgwEsmModel& model,
     const double gradient_norm = model.parameters().global_grad_norm();
     optimizer.step(model.parameters());
     history.batch_loss.push_back(loss_sum * inverse_batch);
+    history.primary_batch_loss.push_back(primary_loss_sum * inverse_batch);
+    history.workspace_aux_batch_loss.push_back(auxiliary_loss_sum * inverse_batch);
+    history.workspace_aux_weight.push_back(auxiliary_weight);
     history.gradient_norm.push_back(gradient_norm);
     history.clip_scale.push_back(optimizer.last_clip_scale());
   }

@@ -95,3 +95,48 @@ SGW_TEST(model_gradients_match_finite_difference_away_from_route_boundaries) {
   }
   SGW_REQUIRE(accepted >= 4);
 }
+
+SGW_TEST(workspace_auxiliary_logits_depend_on_workspace_projection_only) {
+  sgw::BindingTaskConfig task;
+  task.entity_count = 3;
+  task.value_count = 3;
+  task.filler_count = 2;
+  task.binding_count = 1;
+  task.fillers_per_binding = 1;
+  const auto dataset = sgw::make_binding_split(task, 6, 2, 515);
+  auto config = gradient_config(dataset);
+  config.spine_reads_workspace = false;
+  config.output_reads_workspace = false;
+  sgw::SgwEsmModel model(config, 17);
+
+  auto aux_values = [&](sgw::SgwEsmModel& current) {
+    sgw::ad::Tape tape;
+    const auto result =
+        current.forward_sequence(tape, dataset.train.front().tokens, false);
+    std::vector<double> values;
+    for (const auto value : result.workspace_aux_logits) {
+      values.push_back(value.value());
+    }
+    return values;
+  };
+
+  const auto original = aux_values(model);
+  SGW_REQUIRE(original.size() == config.output_classes);
+
+  for (auto& parameter : model.parameters().parameters()) {
+    if (parameter->name() == "output_spine" ||
+        parameter->name() == "output_mechanism") {
+      parameter->value(0) += 1.0;
+    }
+  }
+  const auto after_non_workspace = aux_values(model);
+  SGW_REQUIRE(original == after_non_workspace);
+
+  for (auto& parameter : model.parameters().parameters()) {
+    if (parameter->name() == "output_workspace") {
+      parameter->value(0) += 1.0;
+    }
+  }
+  const auto after_workspace = aux_values(model);
+  SGW_REQUIRE(original != after_workspace);
+}

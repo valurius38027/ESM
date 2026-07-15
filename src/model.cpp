@@ -128,6 +128,12 @@ std::string_view forward_intervention_name(
       return "no_workspace_persistence";
     case ForwardIntervention::no_workspace_output:
       return "no_workspace_output";
+    case ForwardIntervention::no_spine_workspace:
+      return "no_spine_workspace";
+    case ForwardIntervention::no_mechanism_output:
+      return "no_mechanism_output";
+    case ForwardIntervention::workspace_disconnected:
+      return "workspace_disconnected";
     case ForwardIntervention::permuted_recipients:
       return "permuted_recipients";
   }
@@ -156,7 +162,9 @@ std::size_t estimated_step_madds(const ModelConfig& config) {
   if (config.core_only) {
     return total + c * s;
   }
-  total += s * w;
+  if (config.spine_reads_workspace) {
+    total += s * w;
+  }
   total += m * (e + s + w + d);
   total += k * d * (e + s + d + w);
   total += k * w * d;
@@ -165,7 +173,13 @@ std::size_t estimated_step_madds(const ModelConfig& config) {
   total += q * (2 * w * w + 2 * w);
   total += m * w;
   total += w * w;
-  total += c * (s + w + d);
+  total += c * s;
+  if (config.output_reads_workspace) {
+    total += c * w;
+  }
+  if (config.output_reads_mechanism) {
+    total += c * d;
+  }
   return total;
 }
 
@@ -276,6 +290,23 @@ SequenceResult SgwEsmModel::forward_sequence(
   const std::size_t b = config_.workspace_slots;
   const std::size_t w = config_.workspace_dim;
 
+  const bool workspace_persists =
+      intervention != ForwardIntervention::no_workspace_persistence;
+  const bool broadcast_enabled =
+      intervention != ForwardIntervention::no_broadcast &&
+      intervention != ForwardIntervention::workspace_disconnected;
+  const bool spine_workspace_enabled =
+      config_.spine_reads_workspace &&
+      intervention != ForwardIntervention::no_spine_workspace &&
+      intervention != ForwardIntervention::workspace_disconnected;
+  const bool workspace_output_enabled =
+      config_.output_reads_workspace &&
+      intervention != ForwardIntervention::no_workspace_output &&
+      intervention != ForwardIntervention::workspace_disconnected;
+  const bool mechanism_output_enabled =
+      config_.output_reads_mechanism &&
+      intervention != ForwardIntervention::no_mechanism_output;
+
   ModelState state;
   state.spine = zero_vector(tape, s);
   state.mechanisms = zero_vector(tape, m * d);
@@ -289,8 +320,7 @@ SequenceResult SgwEsmModel::forward_sequence(
   }
 
   for (const int token : tokens) {
-    if (!config_.core_only &&
-        intervention == ForwardIntervention::no_workspace_persistence) {
+    if (!config_.core_only && !workspace_persists) {
       state.workspace = zero_vector(tape, b * w);
     }
     StepTrace trace;
@@ -319,7 +349,7 @@ SequenceResult SgwEsmModel::forward_sequence(
                               embedding);
       sum = add_parameter_dot(tape, sum, *spine_recurrent_, component,
                               state.spine);
-      if (!config_.core_only) {
+      if (!config_.core_only && spine_workspace_enabled) {
         sum = add_parameter_dot(tape, sum, *spine_workspace_, component,
                                 old_workspace_pool);
       }
@@ -488,7 +518,7 @@ SequenceResult SgwEsmModel::forward_sequence(
         broadcast_base.push_back(sum);
       }
       std::vector<ad::Var> new_inboxes = state.inboxes;
-      if (intervention != ForwardIntervention::no_broadcast) {
+      if (broadcast_enabled) {
         for (const std::size_t recipient : recipients) {
         for (std::size_t component = 0; component < w; ++component) {
           const ad::Var bias = parameter_var(
@@ -528,24 +558,34 @@ SequenceResult SgwEsmModel::forward_sequence(
   const std::vector<ad::Var> final_workspace_pool =
       pool_workspace(tape, state.workspace, b, w);
   std::vector<ad::Var> logits;
+  std::vector<ad::Var> workspace_aux_logits;
   logits.reserve(config_.output_classes);
+  if (!config_.core_only) {
+    workspace_aux_logits.reserve(config_.output_classes);
+  }
   for (std::size_t output = 0; output < config_.output_classes; ++output) {
     ad::Var logit = parameter_var(tape, *output_bias_, output);
     logit = add_parameter_dot(tape, logit, *output_spine_, output,
                               state.spine);
     if (!config_.core_only) {
-      if (intervention != ForwardIntervention::no_workspace_output) {
-        logit = add_parameter_dot(tape, logit, *output_workspace_, output,
-                                  final_workspace_pool);
+      ad::Var workspace_logit = tape.constant(0.0);
+      workspace_logit = add_parameter_dot(
+          tape, workspace_logit, *output_workspace_, output,
+          final_workspace_pool);
+      workspace_aux_logits.push_back(workspace_logit);
+      if (workspace_output_enabled) {
+        logit = logit + workspace_logit;
       }
-      logit = add_parameter_dot(tape, logit, *output_mechanism_, output,
-                                state.active_summary);
+      if (mechanism_output_enabled) {
+        logit = add_parameter_dot(tape, logit, *output_mechanism_, output,
+                                  state.active_summary);
+      }
     }
     logits.push_back(logit);
   }
 
-  return SequenceResult{std::move(logits), std::move(state),
-                        std::move(traces)};
+  return SequenceResult{std::move(logits), std::move(workspace_aux_logits),
+                        std::move(state), std::move(traces)};
 }
 
 }  // namespace sgw
