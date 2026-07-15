@@ -1,0 +1,28 @@
+name: Export Phase 3 Source
+
+on:
+  pull_request:
+    branches: [agent/phase2-experimental-controls]
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    if: github.head_ref == 'agent/phase3-credit-assignment'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/phase3-credit-assignment
+          fetch-depth: 0
+      - name: Create tracked source archive
+        run: git archive --format=tar.gz --output=phase3-source.tar.gz HEAD
+      - name: Upload source archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase3-source-export
+          path: phase3-source.tar.gz
+          if-no-files-found: error
+          retention-days: 7
