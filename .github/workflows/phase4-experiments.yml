@@ -1,8 +1,6 @@
 name: Phase 4 Mediation Experiments
 
 on:
-  pull_request:
-    branches: [agent/phase3-credit-assignment]
   workflow_dispatch:
     inputs:
       steps:
@@ -19,7 +17,6 @@ permissions:
 
 jobs:
   shard:
-    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'agent/phase4-mediation'
     name: Seeds ${{ matrix.shard }}
     runs-on: ubuntu-24.04
     timeout-minutes: 180
@@ -57,7 +54,6 @@ jobs:
           retention-days: 30
 
   aggregate:
-    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'agent/phase4-mediation'
     name: Aggregate formal results
     needs: shard
     runs-on: ubuntu-24.04
