@@ -1,0 +1,29 @@
+{
+  "annealed_metrics_identical_to": {
+    "kv_first_free": true,
+    "kv_fixed_position": true,
+    "kv_hard_router": true
+  },
+  "annealed_vs_blind": {
+    "final_holdout_accuracy": {
+      "ci_high": 0.8345833333333333,
+      "ci_low": 0.818125,
+      "favorable_seeds": 30,
+      "mean_improvement": 0.82625
+    },
+    "final_holdout_brier": {
+      "ci_high": 0.8160453060173,
+      "ci_low": 0.8121736171744666,
+      "favorable_seeds": 30,
+      "mean_improvement": 0.8140849080995
+    },
+    "final_holdout_nll": {
+      "ci_high": 1.6507585471317001,
+      "ci_low": 1.6395188414708,
+      "favorable_seeds": 30,
+      "mean_improvement": 1.6450584495404668
+    }
+  },
+  "independent_bootstrap_replicates": 200000,
+  "independent_seed": 2026071707
+}
