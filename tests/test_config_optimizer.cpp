@@ -2,6 +2,7 @@
 
 #include "sgw/config.hpp"
 #include "sgw/optimizer.hpp"
+#include "sgw/presets.hpp"
 #include "sgw/tensor.hpp"
 
 #include <cmath>
@@ -160,3 +161,65 @@ SGW_TEST(model_config_rejects_invalid_output_logit_bounds) {
   config.validate();
 }
 #include <limits>
+
+SGW_TEST(key_value_config_rejects_bypasses_and_invalid_shapes) {
+  sgw::ModelConfig config;
+  config.core_only = false;
+  config.vocab_size = 13;
+  config.output_classes = 5;
+  config.key_value_mode = sgw::KeyValueMediationMode::learned_tied;
+  config.entity_count = 6;
+  config.value_count = 5;
+  config.key_dim = 8;
+  config.value_dim = 8;
+  config.workspace_slots = 3;
+  config.workspace_dim = 16;
+  config.mechanism_count = 4;
+  config.mediation_binding_count = 3;
+  config.active_mechanisms = 1;
+  config.workspace_writers = 1;
+  config.broadcast_recipients = 1;
+  config.spine_reads_embedding = false;
+  config.spine_reads_workspace = false;
+  config.output_reads_spine = false;
+  config.output_reads_workspace = false;
+  config.output_reads_mechanism = true;
+  config.validate();
+
+  auto invalid = config;
+  invalid.workspace_dim = 15;
+  SGW_REQUIRE_THROWS(invalid.validate());
+  invalid = config;
+  invalid.entity_count = 0;
+  SGW_REQUIRE_THROWS(invalid.validate());
+  invalid = config;
+  invalid.value_count = 4;
+  SGW_REQUIRE_THROWS(invalid.validate());
+  invalid = config;
+  invalid.fixed_binding_mediation = true;
+  SGW_REQUIRE_THROWS(invalid.validate());
+  invalid = config;
+  invalid.output_reads_spine = true;
+  SGW_REQUIRE_THROWS(invalid.validate());
+  invalid = config;
+  invalid.key_value_logit_scale = 0.0;
+  SGW_REQUIRE_THROWS(invalid.validate());
+}
+
+SGW_TEST(key_value_router_config_rejects_invalid_schedule) {
+  auto config = sgw::make_model_config(
+      sgw::ModelPreset::kv_annealed_router, 13, 5);
+  config.validate();
+  auto invalid = config;
+  invalid.key_value_router_initial_temperature = 0.0;
+  SGW_REQUIRE_THROWS(invalid.validate());
+  invalid = config;
+  invalid.key_value_router_final_temperature = 0.0;
+  SGW_REQUIRE_THROWS(invalid.validate());
+  invalid = config;
+  invalid.key_value_router_final_temperature = 3.0;
+  SGW_REQUIRE_THROWS(invalid.validate());
+  invalid = config;
+  invalid.key_value_router_anneal_steps = 0;
+  SGW_REQUIRE_THROWS(invalid.validate());
+}

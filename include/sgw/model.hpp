@@ -23,6 +23,11 @@ enum class ForwardIntervention {
   no_workspace_writes,
   zero_reader_inbox,
   permuted_recipients,
+  permuted_workspace_keys,
+  zero_query_key,
+  randomized_write_slots,
+  cleared_writer_assignment,
+  allow_write_collisions,
 };
 
 [[nodiscard]] std::string_view forward_intervention_name(
@@ -41,6 +46,7 @@ struct StepTrace {
   std::vector<std::size_t> writers;
   std::vector<std::size_t> writer_slots;
   std::vector<std::size_t> recipients;
+  std::vector<std::size_t> read_slots;
   std::vector<double> mechanism_state_before;
   std::vector<double> mechanism_state_after;
   std::vector<double> inbox_before;
@@ -48,6 +54,10 @@ struct StepTrace {
   std::vector<double> workspace_before;
   std::vector<double> workspace_after;
   std::size_t estimated_madds{0};
+  std::size_t write_collisions{0};
+  double routing_entropy{0.0};
+  std::size_t routing_decisions{0};
+  std::size_t hard_soft_disagreements{0};
 
   [[nodiscard]] bool same_route(const StepTrace& other) const noexcept;
 };
@@ -68,6 +78,10 @@ class SgwEsmModel {
   [[nodiscard]] const ModelConfig& config() const noexcept;
   [[nodiscard]] ParameterSet& parameters() noexcept;
   [[nodiscard]] const ParameterSet& parameters() const noexcept;
+  void set_key_value_routing_step(std::size_t step) noexcept;
+  [[nodiscard]] std::size_t key_value_routing_step() const noexcept;
+  [[nodiscard]] double key_value_router_temperature() const noexcept;
+  [[nodiscard]] bool key_value_router_uses_surrogate() const noexcept;
 
   [[nodiscard]] SequenceResult forward_sequence(
       ad::Tape& tape,
@@ -76,6 +90,10 @@ class SgwEsmModel {
       ForwardIntervention intervention = ForwardIntervention::intact);
 
  private:
+  [[nodiscard]] SequenceResult forward_key_value_sequence(
+      ad::Tape& tape, std::span<const int> tokens, bool capture_trace,
+      ForwardIntervention intervention);
+
   ModelConfig config_;
   ParameterSet parameters_;
 
@@ -119,6 +137,11 @@ class SgwEsmModel {
   Parameter* output_workspace_{nullptr};
   Parameter* output_mechanism_{nullptr};
   Parameter* output_bias_{nullptr};
+
+  Parameter* kv_entity_codebook_{nullptr};
+  Parameter* kv_value_codebook_{nullptr};
+  Parameter* kv_slot_codebook_{nullptr};
+  std::size_t key_value_routing_step_{0};
 };
 
 }  // namespace sgw

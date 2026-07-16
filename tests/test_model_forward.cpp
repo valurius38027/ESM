@@ -26,6 +26,14 @@ sgw::ModelConfig tiny_config() {
   return config;
 }
 
+
+std::vector<double> forward_logits(const sgw::SequenceResult& result) {
+  std::vector<double> values;
+  values.reserve(result.logits.size());
+  for (const auto value : result.logits) values.push_back(value.value());
+  return values;
+}
+
 void require_unique(const std::vector<std::size_t>& values) {
   const std::set<std::size_t> unique(values.begin(), values.end());
   SGW_REQUIRE(unique.size() == values.size());
@@ -211,5 +219,77 @@ SGW_TEST(bounded_output_head_limits_every_logit_without_extra_parameters) {
   for (const auto logit : result.logits) {
     SGW_REQUIRE(logit.value() <= 1.0);
     SGW_REQUIRE(logit.value() >= -1.0);
+  }
+}
+
+SGW_TEST(exact_key_value_path_preserves_slot_and_value_identity) {
+  const auto config = sgw::make_model_config(
+      sgw::ModelPreset::structural_kv_exact, 13, 5);
+  sgw::SgwEsmModel model(config, 101);
+  const std::vector<int> tokens{0, 6, 1, 7, 2, 8, 12, 1};
+  sgw::ad::Tape tape;
+  const auto result = model.forward_sequence(tape, tokens, true);
+
+  SGW_REQUIRE(result.logits.size() == 5);
+  for (std::size_t output = 0; output < 5; ++output) {
+    SGW_REQUIRE_NEAR(result.logits[output].value(),
+                     output == 1 ? 6.0 : 0.0, 0.0);
+  }
+  const std::vector<std::size_t> active{0, 0, 1, 1, 2, 2, 3, 3};
+  const std::vector<std::size_t> slots{0, 0, 1, 1, 2, 2};
+  for (std::size_t step = 0; step < result.traces.size(); ++step) {
+    SGW_REQUIRE(result.traces[step].active_mechanisms ==
+                std::vector<std::size_t>{active[step]});
+    if (step < slots.size()) {
+      SGW_REQUIRE(result.traces[step].writer_slots ==
+                  std::vector<std::size_t>{slots[step]});
+    }
+  }
+  SGW_REQUIRE(result.traces.back().read_slots ==
+              std::vector<std::size_t>{1});
+}
+
+SGW_TEST(learned_key_value_path_uses_tied_codebooks_deterministically) {
+  const auto config = sgw::make_model_config(
+      sgw::ModelPreset::structural_kv_learned, 13, 5);
+  sgw::SgwEsmModel first(config, 103);
+  sgw::SgwEsmModel second(config, 103);
+  const std::vector<int> tokens{0, 6, 1, 7, 2, 8, 12, 2};
+  sgw::ad::Tape first_tape;
+  sgw::ad::Tape second_tape;
+  const auto first_result = first.forward_sequence(first_tape, tokens, true);
+  const auto second_result = second.forward_sequence(second_tape, tokens, true);
+
+  SGW_REQUIRE(forward_logits(first_result) == forward_logits(second_result));
+  const auto best = std::max_element(first_result.logits.begin(),
+                                     first_result.logits.end(),
+                                     [](const auto lhs, const auto rhs) {
+                                       return lhs.value() < rhs.value();
+                                     });
+  SGW_REQUIRE(static_cast<std::size_t>(best - first_result.logits.begin()) == 2);
+  SGW_REQUIRE(first_result.traces.back().read_slots ==
+              std::vector<std::size_t>{2});
+}
+
+SGW_TEST(phase7_first_free_and_learned_routes_write_one_available_slot) {
+  const std::vector<int> tokens{4, 7, 0, 9, 2, 6, 12, 0};
+  for (const auto preset : {sgw::ModelPreset::kv_first_free,
+                            sgw::ModelPreset::kv_hard_router,
+                            sgw::ModelPreset::kv_annealed_router}) {
+    const auto config = sgw::make_model_config(preset, 13, 5);
+    sgw::SgwEsmModel model(config, 211);
+    model.set_key_value_routing_step(0);
+    sgw::ad::Tape tape;
+    const auto result = model.forward_sequence(tape, tokens, true);
+    std::vector<std::size_t> entity_slots;
+    for (std::size_t step = 0; step < 6; step += 2) {
+      SGW_REQUIRE(result.traces[step].writer_slots.size() == 1);
+      SGW_REQUIRE(result.traces[step + 1].writer_slots ==
+                  result.traces[step].writer_slots);
+      entity_slots.push_back(result.traces[step].writer_slots.front());
+    }
+    std::sort(entity_slots.begin(), entity_slots.end());
+    SGW_REQUIRE(entity_slots == std::vector<std::size_t>({0, 1, 2}));
+    SGW_REQUIRE(result.traces.back().read_slots.size() == 1);
   }
 }

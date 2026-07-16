@@ -35,6 +35,11 @@ struct EvaluationMetrics {
   double mean_recipients_per_token{0.0};
   std::vector<std::size_t> mechanism_load;
   std::vector<std::size_t> role_mechanism_load;
+  std::vector<std::size_t> read_slot_load;
+  std::vector<std::size_t> write_slot_load;
+  double mean_write_collision_rate{0.0};
+  double mean_routing_entropy{0.0};
+  double mean_routing_disagreement_rate{0.0};
 };
 
 struct TrainingHistory {
@@ -44,6 +49,9 @@ struct TrainingHistory {
   std::vector<double> workspace_aux_weight;
   std::vector<double> gradient_norm;
   std::vector<double> clip_scale;
+  std::vector<double> routing_collision_rate;
+  std::vector<double> routing_entropy;
+  std::vector<double> routing_disagreement_rate;
   std::size_t samples_consumed{0};
 };
 

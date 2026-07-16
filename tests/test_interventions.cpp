@@ -237,3 +237,86 @@ SGW_TEST(phase4_intervention_names_are_explicit) {
                   sgw::ForwardIntervention::zero_reader_inbox) ==
               std::string_view("zero_reader_inbox"));
 }
+
+SGW_TEST(key_value_interventions_break_retrieval_without_changing_write_routes) {
+  const auto config = sgw::make_model_config(
+      sgw::ModelPreset::structural_kv_learned, 13, 5);
+  sgw::SgwEsmModel model(config, 107);
+  const std::vector<int> tokens{0, 6, 1, 7, 2, 8, 12, 1};
+  sgw::ad::Tape intact_tape;
+  sgw::ad::Tape no_write_tape;
+  sgw::ad::Tape permuted_tape;
+  sgw::ad::Tape zero_query_tape;
+  sgw::ad::Tape no_output_tape;
+  const auto intact = model.forward_sequence(intact_tape, tokens, true);
+  const auto no_write = model.forward_sequence(
+      no_write_tape, tokens, true,
+      sgw::ForwardIntervention::no_workspace_writes);
+  const auto permuted = model.forward_sequence(
+      permuted_tape, tokens, true,
+      sgw::ForwardIntervention::permuted_workspace_keys);
+  const auto zero_query = model.forward_sequence(
+      zero_query_tape, tokens, true,
+      sgw::ForwardIntervention::zero_query_key);
+  const auto no_output = model.forward_sequence(
+      no_output_tape, tokens, true,
+      sgw::ForwardIntervention::no_mechanism_output);
+
+  SGW_REQUIRE(sgw::same_route_trace(intact.traces, no_write.traces));
+  SGW_REQUIRE(any_difference(logits_of(intact), logits_of(no_write)));
+  SGW_REQUIRE(any_difference(logits_of(intact), logits_of(permuted)));
+  SGW_REQUIRE(any_difference(logits_of(intact), logits_of(zero_query)));
+  SGW_REQUIRE(any_difference(logits_of(intact), logits_of(no_output)));
+  for (const auto value : no_write.final_state.workspace) {
+    SGW_REQUIRE_NEAR(value.value(), 0.0, 0.0);
+  }
+}
+
+SGW_TEST(phase6_intervention_names_are_explicit) {
+  SGW_REQUIRE(sgw::forward_intervention_name(
+                  sgw::ForwardIntervention::permuted_workspace_keys) ==
+              std::string_view("permuted_workspace_keys"));
+  SGW_REQUIRE(sgw::forward_intervention_name(
+                  sgw::ForwardIntervention::zero_query_key) ==
+              std::string_view("zero_query_key"));
+}
+
+SGW_TEST(phase7_write_interventions_are_explicit_and_causally_distinct) {
+  const auto config = sgw::make_model_config(
+      sgw::ModelPreset::kv_annealed_router, 13, 5);
+  sgw::SgwEsmModel model(config, 509);
+  model.set_key_value_routing_step(config.key_value_router_anneal_steps);
+  const std::vector<int> tokens{4, 7, 0, 9, 2, 6, 12, 0};
+  sgw::ad::Tape intact_tape;
+  sgw::ad::Tape random_tape;
+  sgw::ad::Tape cleared_tape;
+  sgw::ad::Tape collision_tape;
+  const auto intact = model.forward_sequence(intact_tape, tokens, true);
+  const auto randomized = model.forward_sequence(
+      random_tape, tokens, true,
+      sgw::ForwardIntervention::randomized_write_slots);
+  const auto cleared = model.forward_sequence(
+      cleared_tape, tokens, true,
+      sgw::ForwardIntervention::cleared_writer_assignment);
+  const auto collisions = model.forward_sequence(
+      collision_tape, tokens, true,
+      sgw::ForwardIntervention::allow_write_collisions);
+
+  SGW_REQUIRE(sgw::forward_intervention_name(
+                  sgw::ForwardIntervention::randomized_write_slots) ==
+              std::string_view("randomized_write_slots"));
+  SGW_REQUIRE(sgw::forward_intervention_name(
+                  sgw::ForwardIntervention::cleared_writer_assignment) ==
+              std::string_view("cleared_writer_assignment"));
+  SGW_REQUIRE(sgw::forward_intervention_name(
+                  sgw::ForwardIntervention::allow_write_collisions) ==
+              std::string_view("allow_write_collisions"));
+  SGW_REQUIRE(any_difference(logits_of(intact), logits_of(randomized)));
+  SGW_REQUIRE(any_difference(logits_of(intact), logits_of(cleared)));
+  SGW_REQUIRE(any_difference(logits_of(intact), logits_of(collisions)));
+  std::size_t collision_count = 0;
+  for (const auto& trace : collisions.traces) {
+    collision_count += trace.write_collisions;
+  }
+  SGW_REQUIRE(collision_count >= 1);
+}

@@ -54,6 +54,64 @@ void ModelConfig::validate() const {
     throw std::invalid_argument(
         "broadcast_recipients must not exceed mechanism_count");
   }
+  if (key_value_mode != KeyValueMediationMode::none) {
+    require_positive(entity_count, "entity_count");
+    require_positive(value_count, "value_count");
+    require_positive(key_dim, "key_dim");
+    require_positive(value_dim, "value_dim");
+    require_positive(mediation_binding_count, "mediation_binding_count");
+    require_finite_positive(key_value_logit_scale, "key_value_logit_scale");
+    require_finite_positive(key_value_router_initial_temperature,
+                            "key_value_router_initial_temperature");
+    require_finite_positive(key_value_router_final_temperature,
+                            "key_value_router_final_temperature");
+    if (key_value_router_final_temperature >
+        key_value_router_initial_temperature) {
+      throw std::invalid_argument(
+          "key-value router final temperature must not exceed initial temperature");
+    }
+    if (key_value_write_routing ==
+            KeyValueWriteRoutingMode::annealed_learned &&
+        key_value_router_anneal_steps == 0) {
+      throw std::invalid_argument(
+          "annealed key-value routing requires positive anneal steps");
+    }
+    if (fixed_binding_mediation || core_only) {
+      throw std::invalid_argument(
+          "key-value mediation requires its dedicated non-core path");
+    }
+    if (value_count != output_classes) {
+      throw std::invalid_argument(
+          "key-value mediation requires one value code per output class");
+    }
+    if (workspace_dim != key_dim + value_dim) {
+      throw std::invalid_argument(
+          "key-value workspace dimension must equal key_dim + value_dim");
+    }
+    if (workspace_slots != mediation_binding_count) {
+      throw std::invalid_argument(
+          "key-value mediation requires one slot per binding");
+    }
+    if (mechanism_count < mediation_binding_count + 1) {
+      throw std::invalid_argument(
+          "key-value mediation requires writer traces and one reader trace");
+    }
+    if (active_mechanisms != 1 || workspace_writers != 1 ||
+        broadcast_recipients != 1) {
+      throw std::invalid_argument(
+          "key-value mediation requires k=q=m=1");
+    }
+    if (spine_reads_embedding || spine_reads_workspace || output_reads_spine ||
+        output_reads_workspace || !output_reads_mechanism) {
+      throw std::invalid_argument(
+          "key-value mediation requires the sparse retrieved-value path to be the only content path");
+    }
+    if (vocab_size < entity_count + value_count + 1) {
+      throw std::invalid_argument(
+          "key-value vocabulary does not contain all entity and value tokens");
+    }
+  }
+
   if (fixed_binding_mediation) {
     require_positive(mediation_binding_count, "mediation_binding_count");
     if (core_only) {

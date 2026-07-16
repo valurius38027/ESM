@@ -5,6 +5,7 @@
 #include "sgw/model.hpp"
 #include "sgw/presets.hpp"
 
+#include <algorithm>
 #include <numeric>
 
 #include <cmath>
@@ -235,4 +236,56 @@ SGW_TEST(stream_training_consumes_exact_batch_budget_deterministically) {
   SGW_REQUIRE(second_history.samples_consumed == 96);
   SGW_REQUIRE(first_stream.samples_consumed() == 96);
   SGW_REQUIRE(first_history.batch_loss == second_history.batch_loss);
+}
+
+SGW_TEST(exact_key_value_training_consumes_stream_with_zero_parameters) {
+  sgw::BindingTaskConfig task;
+  task.entity_count = 6;
+  task.value_count = 5;
+  task.filler_count = 1;
+  task.binding_count = 3;
+  task.fillers_per_binding = 0;
+  const auto dataset = sgw::make_structural_binding_split(task, 16, 12, 5151);
+  const auto config = sgw::make_model_config(
+      sgw::ModelPreset::structural_kv_exact,
+      dataset.vocabulary.size(), dataset.config.value_count);
+  sgw::SgwEsmModel model(config, 5);
+  sgw::StructuralBindingStream stream(task, 77);
+  sgw::AdamConfig adam;
+  sgw::TrainingConfig training;
+  training.steps = 4;
+  training.batch_size = 3;
+  const auto history = sgw::train_steps(model, stream, adam, training);
+  SGW_REQUIRE(model.parameters().scalar_count() == 0);
+  SGW_REQUIRE(history.samples_consumed == 12);
+  SGW_REQUIRE(stream.samples_consumed() == 12);
+  SGW_REQUIRE(std::all_of(history.gradient_norm.begin(),
+                          history.gradient_norm.end(),
+                          [](double value) { return value == 0.0; }));
+}
+
+SGW_TEST(phase7_training_records_routing_telemetry_and_hard_only_window) {
+  sgw::BindingTaskConfig task;
+  task.entity_count = 6;
+  task.value_count = 5;
+  task.filler_count = 1;
+  task.binding_count = 3;
+  task.fillers_per_binding = 0;
+  sgw::StructuralBindingStream stream(task, 1701);
+  const auto config = sgw::make_model_config(
+      sgw::ModelPreset::kv_annealed_router, 13, 5);
+  sgw::SgwEsmModel model(config, 1702);
+  sgw::AdamConfig adam;
+  adam.learning_rate = 0.01;
+  sgw::TrainingConfig training;
+  training.steps = config.key_value_router_anneal_steps + 2;
+  training.batch_size = 1;
+  const auto history = sgw::train_steps(model, stream, adam, training);
+  SGW_REQUIRE(history.routing_collision_rate.size() == training.steps);
+  SGW_REQUIRE(history.routing_entropy.size() == training.steps);
+  SGW_REQUIRE(history.routing_disagreement_rate.size() == training.steps);
+  SGW_REQUIRE(history.routing_collision_rate.back() == 0.0);
+  SGW_REQUIRE(history.routing_disagreement_rate.back() == 0.0);
+  SGW_REQUIRE(model.key_value_routing_step() == training.steps - 1);
+  SGW_REQUIRE(!model.key_value_router_uses_surrogate());
 }

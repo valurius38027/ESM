@@ -22,6 +22,12 @@ enum class ExperimentCondition {
   structural_core_blind,
   structural_mediation_linear,
   structural_mediation_bounded,
+  structural_kv_exact,
+  structural_kv_learned,
+  kv_fixed_position,
+  kv_first_free,
+  kv_hard_router,
+  kv_annealed_router,
 };
 
 enum class ModelPreset {
@@ -37,6 +43,12 @@ enum class ModelPreset {
   structural_core_blind,
   structural_mediation_linear,
   structural_mediation_bounded,
+  structural_kv_exact,
+  structural_kv_learned,
+  kv_fixed_position,
+  kv_first_free,
+  kv_hard_router,
+  kv_annealed_router,
   sgw = sgw_redundant,
 };
 

@@ -3,6 +3,7 @@
 #include "sgw/dataset.hpp"
 #include "sgw/experiment.hpp"
 #include "sgw/model.hpp"
+#include "sgw/presets.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -139,4 +140,34 @@ SGW_TEST(workspace_auxiliary_logits_depend_on_workspace_projection_only) {
   }
   const auto after_workspace = aux_values(model);
   SGW_REQUIRE(original != after_workspace);
+}
+
+SGW_TEST(annealed_slot_router_receives_gradient_before_hard_only_window) {
+  sgw::BindingTaskConfig task;
+  task.entity_count = 6;
+  task.value_count = 5;
+  task.filler_count = 1;
+  task.binding_count = 3;
+  task.fillers_per_binding = 0;
+  const auto dataset = sgw::make_structural_binding_split(task, 24, 8, 818);
+  const auto config = sgw::make_model_config(
+      sgw::ModelPreset::kv_annealed_router, dataset.vocabulary.size(), 5);
+  sgw::SgwEsmModel model(config, 313);
+  model.set_key_value_routing_step(0);
+  model.parameters().zero_grad();
+  sgw::ad::Tape tape;
+  const auto result = model.forward_sequence(
+      tape, dataset.train.front().tokens, true);
+  const auto loss = sgw::cross_entropy_loss(
+      tape, result.logits, dataset.train.front().target_class);
+  tape.backward(loss);
+  double router_gradient = 0.0;
+  for (const auto& parameter : model.parameters().parameters()) {
+    if (parameter->name() == "kv_slot_codebook") {
+      for (const double value : parameter->gradients()) {
+        router_gradient += std::abs(value);
+      }
+    }
+  }
+  SGW_REQUIRE(router_gradient > 1.0e-12);
 }

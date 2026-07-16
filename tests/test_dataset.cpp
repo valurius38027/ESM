@@ -204,3 +204,25 @@ SGW_TEST(structural_training_stream_is_deterministic_and_nonrepeating) {
   SGW_REQUIRE(first.samples_consumed() == 6400);
   SGW_REQUIRE(first.remaining() >= 1);
 }
+
+SGW_TEST(structural_samples_cover_every_binding_position_for_each_entity) {
+  sgw::BindingTaskConfig task;
+  task.entity_count = 6;
+  task.value_count = 5;
+  task.filler_count = 1;
+  task.binding_count = 3;
+  task.fillers_per_binding = 0;
+  const auto dataset = sgw::make_structural_binding_split(task, 640, 160, 707);
+  std::vector<std::vector<bool>> seen(
+      task.entity_count, std::vector<bool>(task.binding_count, false));
+  for (const auto& sample : dataset.train) {
+    for (std::size_t binding = 0; binding < task.binding_count; ++binding) {
+      const auto entity = static_cast<std::size_t>(sample.tokens[2 * binding]);
+      seen.at(entity).at(binding) = true;
+    }
+  }
+  for (const auto& positions : seen) {
+    SGW_REQUIRE(std::all_of(positions.begin(), positions.end(),
+                            [](bool value) { return value; }));
+  }
+}
