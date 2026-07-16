@@ -149,3 +149,14 @@ SGW_TEST(fixed_binding_mediation_rejects_bypasses_and_invalid_budgets) {
   invalid.mechanism_count = 3;
   SGW_REQUIRE_THROWS(invalid.validate());
 }
+
+SGW_TEST(model_config_rejects_invalid_output_logit_bounds) {
+  sgw::ModelConfig config;
+  config.output_logit_bound = -1.0;
+  SGW_REQUIRE_THROWS(config.validate());
+  config.output_logit_bound = std::numeric_limits<double>::infinity();
+  SGW_REQUIRE_THROWS(config.validate());
+  config.output_logit_bound = 1.0;
+  config.validate();
+}
+#include <limits>

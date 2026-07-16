@@ -3,8 +3,11 @@
 #include "sgw/dataset.hpp"
 #include "sgw/experiment.hpp"
 #include "sgw/model.hpp"
+#include "sgw/presets.hpp"
 
 #include <numeric>
+
+#include <cmath>
 
 namespace {
 
@@ -172,4 +175,64 @@ SGW_TEST(route_evaluation_reports_role_conditioned_mechanism_load) {
   SGW_REQUIRE(std::accumulate(core_metrics.role_mechanism_load.begin(),
                               core_metrics.role_mechanism_load.end(),
                               std::size_t{0}) == 0);
+}
+
+SGW_TEST(uniform_predictions_have_exact_multiclass_calibration_metrics) {
+  auto config = sgw::make_model_config(sgw::ModelPreset::core_content_blind,
+                                       13, 5);
+  sgw::SgwEsmModel model(config, 4);
+  for (auto& parameter : model.parameters().parameters()) {
+    for (double& value : parameter->mutable_values()) value = 0.0;
+  }
+  std::vector<sgw::BindingSample> samples;
+  for (std::size_t target = 0; target < 5; ++target) {
+    sgw::BindingSample sample;
+    sample.tokens = {0, 6, 1, 7, 2, 8, 12, 0};
+    sample.roles = {sgw::TokenRole::entity, sgw::TokenRole::value,
+                    sgw::TokenRole::entity, sgw::TokenRole::value,
+                    sgw::TokenRole::entity, sgw::TokenRole::value,
+                    sgw::TokenRole::query_marker,
+                    sgw::TokenRole::query_entity};
+    sample.target_class = target;
+    samples.push_back(sample);
+  }
+  const auto metrics = sgw::evaluate(model, samples, false);
+  SGW_REQUIRE_NEAR(metrics.mean_nll, std::log(5.0), 1.0e-12);
+  SGW_REQUIRE_NEAR(metrics.accuracy, 0.2, 1.0e-12);
+  SGW_REQUIRE_NEAR(metrics.mean_brier, 0.8, 1.0e-12);
+  SGW_REQUIRE_NEAR(metrics.ece, 0.0, 1.0e-12);
+  SGW_REQUIRE_NEAR(metrics.mean_max_confidence, 0.2, 1.0e-12);
+  SGW_REQUIRE_NEAR(metrics.mean_true_class_probability, 0.2, 1.0e-12);
+}
+
+SGW_TEST(stream_training_consumes_exact_batch_budget_deterministically) {
+  sgw::BindingTaskConfig task;
+  task.entity_count = 6;
+  task.value_count = 5;
+  task.filler_count = 1;
+  task.binding_count = 3;
+  task.fillers_per_binding = 0;
+  const auto dataset = sgw::make_structural_binding_split(task, 32, 24, 81);
+  auto config = sgw::make_model_config(
+      sgw::ModelPreset::structural_mediation_bounded,
+      dataset.vocabulary.size(), dataset.config.value_count);
+  sgw::SgwEsmModel first(config, 17);
+  sgw::SgwEsmModel second(config, 17);
+  sgw::StructuralBindingStream first_stream(task, 1234);
+  sgw::StructuralBindingStream second_stream(task, 1234);
+  sgw::AdamConfig adam;
+  adam.learning_rate = 0.01;
+  adam.max_grad_norm = 5.0;
+  sgw::TrainingConfig training;
+  training.steps = 12;
+  training.batch_size = 8;
+  training.shuffle_seed = 7;
+  const auto first_history =
+      sgw::train_steps(first, first_stream, adam, training);
+  const auto second_history =
+      sgw::train_steps(second, second_stream, adam, training);
+  SGW_REQUIRE(first_history.samples_consumed == 96);
+  SGW_REQUIRE(second_history.samples_consumed == 96);
+  SGW_REQUIRE(first_stream.samples_consumed() == 96);
+  SGW_REQUIRE(first_history.batch_loss == second_history.batch_loss);
 }

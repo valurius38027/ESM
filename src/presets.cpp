@@ -16,6 +16,10 @@ ExperimentCondition parse_experiment_condition(std::string_view value) {
   if (value == "core_content_blind") return ExperimentCondition::core_content_blind;
   if (value == "mediation_final_only") return ExperimentCondition::mediation_final_only;
   if (value == "mediation_aux_annealed") return ExperimentCondition::mediation_aux_annealed;
+  if (value == "structural_core_full") return ExperimentCondition::structural_core_full;
+  if (value == "structural_core_blind") return ExperimentCondition::structural_core_blind;
+  if (value == "structural_mediation_linear") return ExperimentCondition::structural_mediation_linear;
+  if (value == "structural_mediation_bounded") return ExperimentCondition::structural_mediation_bounded;
   throw std::invalid_argument("unknown experiment condition: " + std::string(value));
 }
 
@@ -31,6 +35,10 @@ std::string_view experiment_condition_name(ExperimentCondition condition) noexce
     case ExperimentCondition::core_content_blind: return "core_content_blind";
     case ExperimentCondition::mediation_final_only: return "mediation_final_only";
     case ExperimentCondition::mediation_aux_annealed: return "mediation_aux_annealed";
+    case ExperimentCondition::structural_core_full: return "structural_core_full";
+    case ExperimentCondition::structural_core_blind: return "structural_core_blind";
+    case ExperimentCondition::structural_mediation_linear: return "structural_mediation_linear";
+    case ExperimentCondition::structural_mediation_bounded: return "structural_mediation_bounded";
   }
   return "unknown";
 }
@@ -49,6 +57,14 @@ ModelPreset model_preset_for_condition(ExperimentCondition condition) noexcept {
     case ExperimentCondition::mediation_final_only:
     case ExperimentCondition::mediation_aux_annealed:
       return ModelPreset::mediation_fixed;
+    case ExperimentCondition::structural_core_full:
+      return ModelPreset::structural_core_full;
+    case ExperimentCondition::structural_core_blind:
+      return ModelPreset::structural_core_blind;
+    case ExperimentCondition::structural_mediation_linear:
+      return ModelPreset::structural_mediation_linear;
+    case ExperimentCondition::structural_mediation_bounded:
+      return ModelPreset::structural_mediation_bounded;
   }
   return ModelPreset::core_small;
 }
@@ -76,6 +92,10 @@ ModelPreset parse_model_preset(std::string_view value) {
   if (value == "core_full_content") return ModelPreset::core_full_content;
   if (value == "core_content_blind") return ModelPreset::core_content_blind;
   if (value == "mediation_fixed") return ModelPreset::mediation_fixed;
+  if (value == "structural_core_full") return ModelPreset::structural_core_full;
+  if (value == "structural_core_blind") return ModelPreset::structural_core_blind;
+  if (value == "structural_mediation_linear") return ModelPreset::structural_mediation_linear;
+  if (value == "structural_mediation_bounded") return ModelPreset::structural_mediation_bounded;
   throw std::invalid_argument("unknown model preset: " + std::string(value));
 }
 
@@ -89,6 +109,10 @@ std::string_view model_preset_name(ModelPreset preset) noexcept {
     case ModelPreset::core_full_content: return "core_full_content";
     case ModelPreset::core_content_blind: return "core_content_blind";
     case ModelPreset::mediation_fixed: return "mediation_fixed";
+    case ModelPreset::structural_core_full: return "structural_core_full";
+    case ModelPreset::structural_core_blind: return "structural_core_blind";
+    case ModelPreset::structural_mediation_linear: return "structural_mediation_linear";
+    case ModelPreset::structural_mediation_bounded: return "structural_mediation_bounded";
   }
   return "unknown";
 }
@@ -140,6 +164,7 @@ ModelConfig make_model_config(ModelPreset preset, std::size_t vocab_size,
       config.spine_reads_workspace = false;
       config.output_reads_workspace = false;
       break;
+    case ModelPreset::structural_core_full:
     case ModelPreset::core_full_content:
       config.embedding_dim = 12;
       config.spine_dim = 24;
@@ -148,6 +173,7 @@ ModelConfig make_model_config(ModelPreset preset, std::size_t vocab_size,
       config.output_reads_workspace = false;
       config.output_reads_mechanism = false;
       break;
+    case ModelPreset::structural_core_blind:
     case ModelPreset::core_content_blind:
       config.embedding_dim = 12;
       config.spine_dim = 24;
@@ -157,6 +183,8 @@ ModelConfig make_model_config(ModelPreset preset, std::size_t vocab_size,
       config.output_reads_workspace = false;
       config.output_reads_mechanism = false;
       break;
+    case ModelPreset::structural_mediation_linear:
+    case ModelPreset::structural_mediation_bounded:
     case ModelPreset::mediation_fixed:
       config.embedding_dim = 12;
       config.spine_dim = 4;
@@ -174,6 +202,9 @@ ModelConfig make_model_config(ModelPreset preset, std::size_t vocab_size,
       config.output_reads_mechanism = true;
       config.fixed_binding_mediation = true;
       config.mediation_binding_count = 3;
+      if (preset == ModelPreset::structural_mediation_bounded) {
+        config.output_logit_bound = 1.0;
+      }
       break;
   }
   config.validate();

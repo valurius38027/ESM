@@ -58,6 +58,34 @@ struct BindingDataset {
   std::vector<BindingSample> holdout;
 };
 
+[[nodiscard]] bool is_structural_holdout_pair(
+    const BindingTaskConfig& config,
+    std::size_t entity,
+    std::size_t value);
+
+class StructuralBindingStream {
+ public:
+  StructuralBindingStream(const BindingTaskConfig& config,
+                          std::uint64_t seed);
+
+  [[nodiscard]] BindingSample next();
+  [[nodiscard]] std::size_t samples_consumed() const noexcept;
+  [[nodiscard]] std::size_t remaining() const noexcept;
+  [[nodiscard]] std::size_t total_samples() const noexcept;
+
+ private:
+  BindingTaskConfig config_;
+  BindingVocabulary vocabulary_;
+  std::vector<BindingSample> samples_;
+  std::size_t cursor_{0};
+};
+
+[[nodiscard]] BindingDataset make_structural_binding_split(
+    const BindingTaskConfig& config,
+    std::size_t train_count,
+    std::size_t holdout_count,
+    std::uint64_t seed);
+
 [[nodiscard]] BindingDataset make_binding_split(
     const BindingTaskConfig& config,
     std::size_t train_count,

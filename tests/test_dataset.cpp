@@ -152,3 +152,55 @@ SGW_TEST(mediation_task_has_three_dense_bindings_and_no_filler_tokens) {
                            sgw::TokenRole::filler) == 0);
   }
 }
+
+SGW_TEST(structural_split_holds_out_entity_value_pairs_without_leakage) {
+  sgw::BindingTaskConfig task;
+  task.entity_count = 6;
+  task.value_count = 5;
+  task.filler_count = 1;
+  task.binding_count = 3;
+  task.fillers_per_binding = 0;
+  const auto dataset = sgw::make_structural_binding_split(task, 160, 160, 77);
+
+  for (const auto& sample : dataset.train) {
+    for (std::size_t position = 0; position < 6; position += 2) {
+      const std::size_t entity = static_cast<std::size_t>(sample.tokens[position]);
+      const std::size_t value = static_cast<std::size_t>(
+          sample.tokens[position + 1] - static_cast<int>(task.entity_count));
+      SGW_REQUIRE(!sgw::is_structural_holdout_pair(task, entity, value));
+    }
+  }
+  for (const auto& sample : dataset.holdout) {
+    SGW_REQUIRE(sgw::is_structural_holdout_pair(
+        task, sample.queried_entity, sample.target_class));
+    for (std::size_t position = 0; position < 6; position += 2) {
+      const std::size_t entity = static_cast<std::size_t>(sample.tokens[position]);
+      const std::size_t value = static_cast<std::size_t>(
+          sample.tokens[position + 1] - static_cast<int>(task.entity_count));
+      if (entity != sample.queried_entity) {
+        SGW_REQUIRE(!sgw::is_structural_holdout_pair(task, entity, value));
+      }
+    }
+  }
+}
+
+SGW_TEST(structural_training_stream_is_deterministic_and_nonrepeating) {
+  sgw::BindingTaskConfig task;
+  task.entity_count = 6;
+  task.value_count = 5;
+  task.filler_count = 1;
+  task.binding_count = 3;
+  task.fillers_per_binding = 0;
+  sgw::StructuralBindingStream first(task, 991);
+  sgw::StructuralBindingStream second(task, 991);
+  std::set<std::vector<int>> seen;
+  for (std::size_t index = 0; index < 6400; ++index) {
+    const auto lhs = first.next();
+    const auto rhs = second.next();
+    SGW_REQUIRE(lhs.tokens == rhs.tokens);
+    SGW_REQUIRE(lhs.target_class == rhs.target_class);
+    SGW_REQUIRE(seen.insert(lhs.tokens).second);
+  }
+  SGW_REQUIRE(first.samples_consumed() == 6400);
+  SGW_REQUIRE(first.remaining() >= 1);
+}

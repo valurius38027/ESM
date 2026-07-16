@@ -195,3 +195,21 @@ SGW_TEST(fixed_mediation_rejects_noncanonical_sequence_length) {
   sgw::ad::Tape tape;
   SGW_REQUIRE_THROWS(model.forward_sequence(tape, too_short, false));
 }
+
+SGW_TEST(bounded_output_head_limits_every_logit_without_extra_parameters) {
+  auto config = sgw::make_model_config(
+      sgw::ModelPreset::structural_mediation_bounded, 13, 5);
+  sgw::SgwEsmModel model(config, 9);
+  for (auto& parameter : model.parameters().parameters()) {
+    if (parameter->name() == "output_bias") {
+      for (double& value : parameter->mutable_values()) value = 100.0;
+    }
+  }
+  const std::vector<int> tokens{0, 6, 1, 7, 2, 8, 12, 0};
+  sgw::ad::Tape tape;
+  const auto result = model.forward_sequence(tape, tokens, false);
+  for (const auto logit : result.logits) {
+    SGW_REQUIRE(logit.value() <= 1.0);
+    SGW_REQUIRE(logit.value() >= -1.0);
+  }
+}

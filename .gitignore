@@ -17,3 +17,7 @@ __pycache__/
 /results/phase4-formal/
 /results/merged-phase4/
 /results/phase4-smoke/
+/results/phase5-shard/
+/results/phase5-formal/
+/results/merged-phase5/
+/results/phase5-smoke/

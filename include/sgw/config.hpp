@@ -24,6 +24,7 @@ struct ModelConfig {
   bool output_reads_mechanism{true};
   bool fixed_binding_mediation{false};
   std::size_t mediation_binding_count{0};
+  double output_logit_bound{0.0};
 
   void validate() const;
 };

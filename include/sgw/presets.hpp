@@ -18,6 +18,10 @@ enum class ExperimentCondition {
   core_content_blind,
   mediation_final_only,
   mediation_aux_annealed,
+  structural_core_full,
+  structural_core_blind,
+  structural_mediation_linear,
+  structural_mediation_bounded,
 };
 
 enum class ModelPreset {
@@ -29,6 +33,10 @@ enum class ModelPreset {
   core_full_content,
   core_content_blind,
   mediation_fixed,
+  structural_core_full,
+  structural_core_blind,
+  structural_mediation_linear,
+  structural_mediation_bounded,
   sgw = sgw_redundant,
 };
 

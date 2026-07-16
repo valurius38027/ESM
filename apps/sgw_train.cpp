@@ -75,6 +75,14 @@ sgw::ExperimentCondition default_condition_for_preset(
       return sgw::ExperimentCondition::core_content_blind;
     case sgw::ModelPreset::mediation_fixed:
       return sgw::ExperimentCondition::mediation_final_only;
+    case sgw::ModelPreset::structural_core_full:
+      return sgw::ExperimentCondition::structural_core_full;
+    case sgw::ModelPreset::structural_core_blind:
+      return sgw::ExperimentCondition::structural_core_blind;
+    case sgw::ModelPreset::structural_mediation_linear:
+      return sgw::ExperimentCondition::structural_mediation_linear;
+    case sgw::ModelPreset::structural_mediation_bounded:
+      return sgw::ExperimentCondition::structural_mediation_bounded;
   }
   return sgw::ExperimentCondition::core_small;
 }
@@ -90,10 +98,14 @@ Options parse_options(int argc, char** argv) {
              "sgw_redundant_final_only|sgw_broadcast_forced_final_only|"
              "sgw_broadcast_forced_aux_annealed|core_full_content|"
              "core_content_blind|mediation_final_only|"
-             "mediation_aux_annealed] "
+             "mediation_aux_annealed|structural_core_full|"
+             "structural_core_blind|structural_mediation_linear|"
+             "structural_mediation_bounded] "
              "[--preset core_small|core_compute_matched|core_param_matched|"
              "sgw|sgw_broadcast_forced|core_full_content|"
-             "core_content_blind|mediation_fixed] [--mode core_only|sgw] [--seed N] "
+             "core_content_blind|mediation_fixed|structural_core_full|"
+             "structural_core_blind|structural_mediation_linear|"
+             "structural_mediation_bounded] [--mode core_only|sgw] [--seed N] "
              "[--steps N] [--batch-size N] [--train-count N] "
              "[--holdout-count N] [--output PATH] "
              "[--causal-output PATH]\n";
@@ -142,7 +154,9 @@ Options parse_options(int argc, char** argv) {
        options.preset == sgw::ModelPreset::core_compute_matched ||
        options.preset == sgw::ModelPreset::core_param_matched ||
        options.preset == sgw::ModelPreset::core_full_content ||
-       options.preset == sgw::ModelPreset::core_content_blind)) {
+       options.preset == sgw::ModelPreset::core_content_blind ||
+       options.preset == sgw::ModelPreset::structural_core_full ||
+       options.preset == sgw::ModelPreset::structural_core_blind)) {
     usage_error("--causal-output requires an SGW condition");
   }
   return options;
@@ -189,6 +203,13 @@ double final_weighted_aux_window(const sgw::TrainingHistory& history) {
   return sum / static_cast<double>(count);
 }
 
+bool is_structural_condition(sgw::ExperimentCondition condition) noexcept {
+  return condition == sgw::ExperimentCondition::structural_core_full ||
+         condition == sgw::ExperimentCondition::structural_core_blind ||
+         condition == sgw::ExperimentCondition::structural_mediation_linear ||
+         condition == sgw::ExperimentCondition::structural_mediation_bounded;
+}
+
 sgw::BindingTaskConfig task_config(sgw::ExperimentCondition condition) {
   sgw::BindingTaskConfig config;
   config.entity_count = 6;
@@ -196,7 +217,8 @@ sgw::BindingTaskConfig task_config(sgw::ExperimentCondition condition) {
   if (condition == sgw::ExperimentCondition::core_full_content ||
       condition == sgw::ExperimentCondition::core_content_blind ||
       condition == sgw::ExperimentCondition::mediation_final_only ||
-      condition == sgw::ExperimentCondition::mediation_aux_annealed) {
+      condition == sgw::ExperimentCondition::mediation_aux_annealed ||
+      is_structural_condition(condition)) {
     config.filler_count = 1;
     config.binding_count = 3;
     config.fillers_per_binding = 0;
@@ -277,7 +299,13 @@ void write_primary_csv(const Options& options,
          "first_primary_window_loss,last_primary_window_loss,"
          "last_workspace_aux_window_loss,"
          "anneal_boundary_primary_window_loss,final_workspace_aux_weight,"
-         "final_weighted_workspace_aux_window_loss\n";
+         "final_weighted_workspace_aux_window_loss,training_stream_samples,"
+         "output_logit_bound,initial_train_brier,initial_holdout_brier,"
+         "final_train_brier,final_holdout_brier,initial_train_ece,"
+         "initial_holdout_ece,final_train_ece,final_holdout_ece,"
+         "final_train_max_confidence,final_holdout_max_confidence,"
+         "final_train_true_class_probability,"
+         "final_holdout_true_class_probability\n";
   output << std::fixed << std::setprecision(12)
          << sgw::model_preset_name(options.preset) << ',' << options.seed << ','
          << options.steps << ',' << options.batch_size << ','
@@ -310,7 +338,16 @@ void write_primary_csv(const Options& options,
          << (history.workspace_aux_weight.empty()
                  ? 0.0
                  : history.workspace_aux_weight.back())
-         << ',' << final_weighted_aux_window(history) << '\n';
+         << ',' << final_weighted_aux_window(history) << ','
+         << history.samples_consumed << ',' << model.config().output_logit_bound
+         << ',' << initial_train.mean_brier << ',' << initial_holdout.mean_brier
+         << ',' << final_train.mean_brier << ',' << final_holdout.mean_brier
+         << ',' << initial_train.ece << ',' << initial_holdout.ece
+         << ',' << final_train.ece << ',' << final_holdout.ece
+         << ',' << final_train.mean_max_confidence << ','
+         << final_holdout.mean_max_confidence << ','
+         << final_train.mean_true_class_probability << ','
+         << final_holdout.mean_true_class_probability << '\n';
 }
 
 void write_causal_csv(const Options& options, sgw::SgwEsmModel& model,
@@ -351,7 +388,10 @@ void write_causal_csv(const Options& options, sgw::SgwEsmModel& model,
          "nll_delta_vs_intact,accuracy_delta_vs_intact,"
          "mean_active_mechanisms_per_token,mean_writers_per_token,"
          "mean_recipients_per_token,mechanism_load,role_mechanism_load,"
-         "condition\n";
+         "condition,holdout_brier,holdout_ece,holdout_max_confidence,"
+         "holdout_true_class_probability,brier_delta_vs_intact,"
+         "ece_delta_vs_intact,max_confidence_delta_vs_intact,"
+         "true_class_probability_delta_vs_intact\n";
   output << std::fixed << std::setprecision(12);
   for (std::size_t index = 0; index < interventions.size(); ++index) {
     const auto& current = metrics[index];
@@ -366,6 +406,14 @@ void write_causal_csv(const Options& options, sgw::SgwEsmModel& model,
            << role_mechanism_load_text(current.role_mechanism_load,
                                        model.config().mechanism_count)
            << ',' << sgw::experiment_condition_name(options.condition)
+           << ',' << current.mean_brier << ',' << current.ece << ','
+           << current.mean_max_confidence << ','
+           << current.mean_true_class_probability << ','
+           << current.mean_brier - intact.mean_brier << ','
+           << current.ece - intact.ece << ','
+           << current.mean_max_confidence - intact.mean_max_confidence << ','
+           << current.mean_true_class_probability -
+                  intact.mean_true_class_probability
            << '\n';
   }
 }
@@ -376,9 +424,14 @@ int main(int argc, char** argv) {
   try {
     const Options options = parse_options(argc, argv);
     const auto started = std::chrono::steady_clock::now();
-    const sgw::BindingDataset dataset = sgw::make_binding_split(
-        task_config(options.condition), options.train_count, options.holdout_count,
-        options.seed ^ 0x9e3779b97f4a7c15ULL);
+    const sgw::BindingTaskConfig task = task_config(options.condition);
+    const sgw::BindingDataset dataset = is_structural_condition(options.condition)
+        ? sgw::make_structural_binding_split(
+              task, options.train_count, options.holdout_count,
+              options.seed ^ 0x9e3779b97f4a7c15ULL)
+        : sgw::make_binding_split(
+              task, options.train_count, options.holdout_count,
+              options.seed ^ 0x9e3779b97f4a7c15ULL);
     const sgw::ModelConfig config = sgw::make_model_config(
         options.preset, dataset.vocabulary.size(), dataset.config.value_count);
     sgw::SgwEsmModel model(config, options.seed);
@@ -397,8 +450,14 @@ int main(int argc, char** argv) {
 
     const auto initial_train = sgw::evaluate(model, dataset.train, false);
     const auto initial_holdout = sgw::evaluate(model, dataset.holdout, false);
-    const auto history =
-        sgw::train_steps(model, dataset.train, adam, training);
+    sgw::TrainingHistory history;
+    if (is_structural_condition(options.condition)) {
+      sgw::StructuralBindingStream stream(
+          task, options.seed ^ 0xd1b54a32d192ed03ULL);
+      history = sgw::train_steps(model, stream, adam, training);
+    } else {
+      history = sgw::train_steps(model, dataset.train, adam, training);
+    }
     const auto final_train = sgw::evaluate(model, dataset.train, true);
     const auto final_holdout = sgw::evaluate(model, dataset.holdout, true);
     write_primary_csv(options, dataset, model, initial_train, initial_holdout,
