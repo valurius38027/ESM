@@ -1,0 +1,33 @@
+name: Export Phase 4 Source
+
+on:
+  pull_request:
+    branches: [agent/phase3-credit-assignment]
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    if: github.head_ref == 'agent/phase4-mediation'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/phase4-mediation
+          fetch-depth: 0
+      - name: Export tracked source tree
+        run: |
+          set -euo pipefail
+          git archive --format=tar.gz --output=phase4-source.tar.gz HEAD
+          sha256sum phase4-source.tar.gz > phase4-source.tar.gz.sha256
+      - name: Upload source snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase4-source-export
+          path: |
+            phase4-source.tar.gz
+            phase4-source.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 7
