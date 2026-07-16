@@ -69,6 +69,12 @@ sgw::ExperimentCondition default_condition_for_preset(
       return sgw::ExperimentCondition::sgw_redundant_final_only;
     case sgw::ModelPreset::sgw_broadcast_forced:
       return sgw::ExperimentCondition::sgw_broadcast_forced_final_only;
+    case sgw::ModelPreset::core_full_content:
+      return sgw::ExperimentCondition::core_full_content;
+    case sgw::ModelPreset::core_content_blind:
+      return sgw::ExperimentCondition::core_content_blind;
+    case sgw::ModelPreset::mediation_fixed:
+      return sgw::ExperimentCondition::mediation_final_only;
   }
   return sgw::ExperimentCondition::core_small;
 }
@@ -82,9 +88,12 @@ Options parse_options(int argc, char** argv) {
           << "Usage: sgw_train [--condition core_small|"
              "core_compute_matched|core_param_matched|"
              "sgw_redundant_final_only|sgw_broadcast_forced_final_only|"
-             "sgw_broadcast_forced_aux_annealed] "
+             "sgw_broadcast_forced_aux_annealed|core_full_content|"
+             "core_content_blind|mediation_final_only|"
+             "mediation_aux_annealed] "
              "[--preset core_small|core_compute_matched|core_param_matched|"
-             "sgw|sgw_broadcast_forced] [--mode core_only|sgw] [--seed N] "
+             "sgw|sgw_broadcast_forced|core_full_content|"
+             "core_content_blind|mediation_fixed] [--mode core_only|sgw] [--seed N] "
              "[--steps N] [--batch-size N] [--train-count N] "
              "[--holdout-count N] [--output PATH] "
              "[--causal-output PATH]\n";
@@ -131,7 +140,9 @@ Options parse_options(int argc, char** argv) {
   if (options.causal_output.has_value() &&
       (options.preset == sgw::ModelPreset::core_small ||
        options.preset == sgw::ModelPreset::core_compute_matched ||
-       options.preset == sgw::ModelPreset::core_param_matched)) {
+       options.preset == sgw::ModelPreset::core_param_matched ||
+       options.preset == sgw::ModelPreset::core_full_content ||
+       options.preset == sgw::ModelPreset::core_content_blind)) {
     usage_error("--causal-output requires an SGW condition");
   }
   return options;
@@ -147,13 +158,53 @@ double window_mean(const std::vector<double>& values, bool first) {
   return sum / static_cast<double>(count);
 }
 
-sgw::BindingTaskConfig task_config() {
+double window_mean_ending_at(const std::vector<double>& values,
+                             std::size_t end_exclusive) {
+  if (values.empty() || end_exclusive == 0) {
+    return 0.0;
+  }
+  end_exclusive = std::min(end_exclusive, values.size());
+  const std::size_t count = std::min<std::size_t>(10, end_exclusive);
+  const std::size_t begin = end_exclusive - count;
+  double sum = 0.0;
+  for (std::size_t index = begin; index < end_exclusive; ++index) {
+    sum += values[index];
+  }
+  return sum / static_cast<double>(count);
+}
+
+double final_weighted_aux_window(const sgw::TrainingHistory& history) {
+  const std::size_t count = std::min<std::size_t>(
+      10, history.workspace_aux_batch_loss.size());
+  if (count == 0) {
+    return 0.0;
+  }
+  const std::size_t begin = history.workspace_aux_batch_loss.size() - count;
+  double sum = 0.0;
+  for (std::size_t index = begin;
+       index < history.workspace_aux_batch_loss.size(); ++index) {
+    sum += history.workspace_aux_batch_loss[index] *
+           history.workspace_aux_weight[index];
+  }
+  return sum / static_cast<double>(count);
+}
+
+sgw::BindingTaskConfig task_config(sgw::ExperimentCondition condition) {
   sgw::BindingTaskConfig config;
   config.entity_count = 6;
   config.value_count = 5;
-  config.filler_count = 5;
-  config.binding_count = 2;
-  config.fillers_per_binding = 2;
+  if (condition == sgw::ExperimentCondition::core_full_content ||
+      condition == sgw::ExperimentCondition::core_content_blind ||
+      condition == sgw::ExperimentCondition::mediation_final_only ||
+      condition == sgw::ExperimentCondition::mediation_aux_annealed) {
+    config.filler_count = 1;
+    config.binding_count = 3;
+    config.fillers_per_binding = 0;
+  } else {
+    config.filler_count = 5;
+    config.binding_count = 2;
+    config.fillers_per_binding = 2;
+  }
   return config;
 }
 
@@ -224,7 +275,9 @@ void write_primary_csv(const Options& options,
          "mechanism_load,role_mechanism_load,condition,"
          "workspace_aux_initial_weight,workspace_aux_anneal_steps,"
          "first_primary_window_loss,last_primary_window_loss,"
-         "last_workspace_aux_window_loss\n";
+         "last_workspace_aux_window_loss,"
+         "anneal_boundary_primary_window_loss,final_workspace_aux_weight,"
+         "final_weighted_workspace_aux_window_loss\n";
   output << std::fixed << std::setprecision(12)
          << sgw::model_preset_name(options.preset) << ',' << options.seed << ','
          << options.steps << ',' << options.batch_size << ','
@@ -249,7 +302,15 @@ void write_primary_csv(const Options& options,
          << sgw::condition_workspace_aux_anneal_steps(options.condition) << ','
          << window_mean(history.primary_batch_loss, true) << ','
          << window_mean(history.primary_batch_loss, false) << ','
-         << window_mean(history.workspace_aux_batch_loss, false) << '\n';
+         << window_mean(history.workspace_aux_batch_loss, false) << ','
+         << window_mean_ending_at(
+                history.primary_batch_loss,
+                sgw::condition_workspace_aux_anneal_steps(options.condition))
+         << ','
+         << (history.workspace_aux_weight.empty()
+                 ? 0.0
+                 : history.workspace_aux_weight.back())
+         << ',' << final_weighted_aux_window(history) << '\n';
 }
 
 void write_causal_csv(const Options& options, sgw::SgwEsmModel& model,
@@ -267,6 +328,10 @@ void write_causal_csv(const Options& options, sgw::SgwEsmModel& model,
     interventions.push_back(sgw::ForwardIntervention::no_spine_workspace);
     interventions.push_back(sgw::ForwardIntervention::no_mechanism_output);
     interventions.push_back(sgw::ForwardIntervention::workspace_disconnected);
+  }
+  if (model.config().fixed_binding_mediation) {
+    interventions.push_back(sgw::ForwardIntervention::no_workspace_writes);
+    interventions.push_back(sgw::ForwardIntervention::zero_reader_inbox);
   }
   interventions.push_back(sgw::ForwardIntervention::permuted_recipients);
   std::vector<sgw::EvaluationMetrics> metrics(interventions.size());
@@ -312,7 +377,7 @@ int main(int argc, char** argv) {
     const Options options = parse_options(argc, argv);
     const auto started = std::chrono::steady_clock::now();
     const sgw::BindingDataset dataset = sgw::make_binding_split(
-        task_config(), options.train_count, options.holdout_count,
+        task_config(options.condition), options.train_count, options.holdout_count,
         options.seed ^ 0x9e3779b97f4a7c15ULL);
     const sgw::ModelConfig config = sgw::make_model_config(
         options.preset, dataset.vocabulary.size(), dataset.config.value_count);

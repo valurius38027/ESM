@@ -26,7 +26,7 @@ timeout 110s "$exe" "${common[@]}" --output "$second" \
 cmp "$first" "$second"
 cmp "$causal_first" "$causal_second"
 
-header='preset,seed,steps,batch_size,parameters,train_count,holdout_count,sequence_length,chance_nll,initial_train_nll,initial_holdout_nll,final_train_nll,final_holdout_nll,final_train_accuracy,final_holdout_accuracy,mean_estimated_madds_per_token,mean_active_mechanisms_per_token,mean_writers_per_token,mean_recipients_per_token,first_window_loss,last_window_loss,mechanism_load,role_mechanism_load,condition,workspace_aux_initial_weight,workspace_aux_anneal_steps,first_primary_window_loss,last_primary_window_loss,last_workspace_aux_window_loss'
+header='preset,seed,steps,batch_size,parameters,train_count,holdout_count,sequence_length,chance_nll,initial_train_nll,initial_holdout_nll,final_train_nll,final_holdout_nll,final_train_accuracy,final_holdout_accuracy,mean_estimated_madds_per_token,mean_active_mechanisms_per_token,mean_writers_per_token,mean_recipients_per_token,first_window_loss,last_window_loss,mechanism_load,role_mechanism_load,condition,workspace_aux_initial_weight,workspace_aux_anneal_steps,first_primary_window_loss,last_primary_window_loss,last_workspace_aux_window_loss,anneal_boundary_primary_window_loss,final_workspace_aux_weight,final_weighted_workspace_aux_window_loss'
 [[ $(head -n 1 "$first") == "$header" ]]
 [[ $(wc -l < "$first") -eq 2 ]]
 grep -q '^sgw,41,3,2,2182,' "$first"
@@ -70,3 +70,28 @@ for intervention in intact no_broadcast no_workspace_persistence no_workspace_ou
   grep -q "^17,$intervention," "$forced_causal"
 done
 grep -q ',sgw_broadcast_forced_aux_annealed$' "$forced_causal"
+
+
+mediation="$out_dir/mediation-aux.csv"
+mediation_causal="$out_dir/mediation-aux-causal.csv"
+timeout 110s "$exe" \
+  --condition mediation_aux_annealed \
+  --seed 19 --steps 3 --batch-size 2 --train-count 12 --holdout-count 6 \
+  --output "$mediation" --causal-output "$mediation_causal" >/dev/null
+grep -q '^mediation_fixed,19,3,2,15650,' "$mediation"
+grep -q ',mediation_aux_annealed,0.500000000000,200,' "$mediation"
+awk -F, 'NR==2 { exit !($8 == 8 && $17 == 1 && $18 == 0.75 && $19 == 1) }' "$mediation"
+[[ $(wc -l < "$mediation_causal") -eq 11 ]]
+for intervention in intact no_broadcast no_workspace_persistence no_workspace_output no_spine_workspace no_mechanism_output workspace_disconnected no_workspace_writes zero_reader_inbox permuted_recipients; do
+  grep -q "^19,$intervention," "$mediation_causal"
+done
+grep -q ',mediation_aux_annealed$' "$mediation_causal"
+
+for entry in 'core_full_content:1169:984' 'core_content_blind:725:696'; do
+  IFS=: read -r condition parameters madds <<<"$entry"
+  file="$out_dir/$condition.csv"
+  timeout 110s "$exe" --condition "$condition" --seed 23 --steps 1 \
+    --batch-size 1 --train-count 6 --holdout-count 3 --output "$file" >/dev/null
+  grep -q "^$condition,23,1,1,$parameters," "$file"
+  awk -F, -v expected="$madds" 'NR==2 { exit !($16 == expected ".000000000000") }' "$file"
+done

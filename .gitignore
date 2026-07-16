@@ -13,3 +13,7 @@ __pycache__/
 /results/phase3-shard/
 /results/phase3-formal/
 /results/merged-phase3/
+/results/phase4-shard/
+/results/phase4-formal/
+/results/merged-phase4/
+/results/phase4-smoke/

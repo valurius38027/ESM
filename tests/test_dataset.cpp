@@ -2,6 +2,7 @@
 
 #include "sgw/dataset.hpp"
 
+#include <algorithm>
 #include <set>
 #include <sstream>
 #include <string>
@@ -129,4 +130,25 @@ SGW_TEST(binding_task_rejects_impossible_or_empty_configuration) {
 
   SGW_REQUIRE_THROWS(sgw::make_binding_split(config, 0, 2, 1));
   SGW_REQUIRE_THROWS(sgw::make_binding_split(config, 2, 0, 1));
+}
+
+SGW_TEST(mediation_task_has_three_dense_bindings_and_no_filler_tokens) {
+  sgw::BindingTaskConfig config;
+  config.entity_count = 6;
+  config.value_count = 5;
+  config.filler_count = 1;
+  config.binding_count = 3;
+  config.fillers_per_binding = 0;
+  const auto dataset = sgw::make_binding_split(config, 24, 12, 4040);
+  SGW_REQUIRE(dataset.config.sequence_length() == 8);
+  for (const auto& sample : dataset.train) {
+    SGW_REQUIRE(sample.tokens.size() == 8);
+    SGW_REQUIRE(std::count(sample.roles.begin(), sample.roles.end(),
+                           sgw::TokenRole::filler) == 0);
+  }
+  for (const auto& sample : dataset.holdout) {
+    SGW_REQUIRE(sample.tokens.size() == 8);
+    SGW_REQUIRE(std::count(sample.roles.begin(), sample.roles.end(),
+                           sgw::TokenRole::filler) == 0);
+  }
 }

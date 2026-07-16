@@ -1,0 +1,42 @@
+{
+  "analysis_seed": 20260715,
+  "bootstrap_replicates": 50000,
+  "causal_rows": 300,
+  "conditions": [
+    "core_full_content",
+    "core_content_blind",
+    "mediation_final_only",
+    "mediation_aux_annealed"
+  ],
+  "file_hashes": {
+    "phase4_causal.csv": "c38e2c9e0237de64e92ef0ca96f1693603eba7a84ce7c4fe9c61c58a787cbdd3",
+    "phase4_causal_comparisons.csv": "5653d63bf04596ec8f58a79520cdc29ef09c5a2c3c20117b9ddb32f88073fcf7",
+    "phase4_paired.csv": "ef9d1d8fdcd63ff975161e96e16c91948750738646a3d5931c661447b7e11c99",
+    "phase4_routing.csv": "e67bf8aa53bed3607ba9ce1c67130c995f9f1fffb84f3d56d931bc9b9537c6a2",
+    "phase4_routing_stability.csv": "e33621a99f1130dfbc3c5e06daf9f2d03b0df96fa23bccc4714ea4513c96572d",
+    "phase4_runs.csv": "487f2060fa2749ab249849481e1add461645d8575be518f90b9c7456567c1d47",
+    "phase4_summary.csv": "6140ff3f33e7b6b409f0620f34ddac988272fdf69f975c4b3fbb3d63a4dcef5d"
+  },
+  "interventions": [
+    "intact",
+    "no_broadcast",
+    "no_workspace_persistence",
+    "no_workspace_output",
+    "no_spine_workspace",
+    "no_mechanism_output",
+    "workspace_disconnected",
+    "no_workspace_writes",
+    "zero_reader_inbox",
+    "permuted_recipients"
+  ],
+  "roles": [
+    "entity",
+    "value",
+    "filler",
+    "query_marker",
+    "query_entity"
+  ],
+  "run_rows": 120,
+  "seed_count": 30,
+  "seed_start": 0
+}

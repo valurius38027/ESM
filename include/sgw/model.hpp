@@ -20,6 +20,8 @@ enum class ForwardIntervention {
   no_spine_workspace,
   no_mechanism_output,
   workspace_disconnected,
+  no_workspace_writes,
+  zero_reader_inbox,
   permuted_recipients,
 };
 

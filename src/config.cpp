@@ -50,6 +50,31 @@ void ModelConfig::validate() const {
     throw std::invalid_argument(
         "broadcast_recipients must not exceed mechanism_count");
   }
+  if (fixed_binding_mediation) {
+    require_positive(mediation_binding_count, "mediation_binding_count");
+    if (core_only) {
+      throw std::invalid_argument(
+          "fixed_binding_mediation requires a non-core model");
+    }
+    if (active_mechanisms != 1 || workspace_writers != 1 ||
+        broadcast_recipients != 1) {
+      throw std::invalid_argument(
+          "fixed_binding_mediation requires k=q=m=1");
+    }
+    if (mechanism_count < mediation_binding_count + 1) {
+      throw std::invalid_argument(
+          "fixed_binding_mediation requires one writer per binding and one reader");
+    }
+    if (workspace_slots < mediation_binding_count) {
+      throw std::invalid_argument(
+          "fixed_binding_mediation requires one workspace slot per binding");
+    }
+    if (spine_reads_embedding || spine_reads_workspace || output_reads_spine ||
+        output_reads_workspace || !output_reads_mechanism) {
+      throw std::invalid_argument(
+          "fixed_binding_mediation requires the mechanism broadcast path to be the only content path");
+    }
+  }
 }
 
 void AdamConfig::validate() const {
