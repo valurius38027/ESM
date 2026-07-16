@@ -1,0 +1,37 @@
+{
+  "analysis_seed": 20260716,
+  "annealed_structural_gate_pass": true,
+  "bootstrap_replicates": 50000,
+  "causal_gate_pass": true,
+  "causal_rows": 450,
+  "collision_gate_pass": true,
+  "conditions": [
+    "structural_core_blind",
+    "kv_fixed_position",
+    "kv_first_free",
+    "kv_hard_router",
+    "kv_annealed_router"
+  ],
+  "first_free_gate_pass": true,
+  "interventions": [
+    "intact",
+    "no_broadcast",
+    "no_workspace_persistence",
+    "no_workspace_output",
+    "no_spine_workspace",
+    "no_mechanism_output",
+    "workspace_disconnected",
+    "no_workspace_writes",
+    "zero_reader_inbox",
+    "permuted_workspace_keys",
+    "zero_query_key",
+    "randomized_write_slots",
+    "cleared_writer_assignment",
+    "allow_write_collisions",
+    "permuted_recipients"
+  ],
+  "overall_gate_pass": true,
+  "run_rows": 150,
+  "seed_count": 30,
+  "seed_start": 0
+}

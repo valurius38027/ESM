@@ -1,0 +1,17 @@
+comparison,baseline,candidate,metric,mean_improvement,ci_low,ci_high,favorable_seeds,n
+first_free_vs_blind,structural_core_blind,kv_first_free,final_holdout_nll,1.6450584495404668,1.639583195108245,1.650760915782204,30,30
+first_free_vs_blind,structural_core_blind,kv_first_free,final_holdout_brier,0.8140849080995001,0.8121836256854907,0.8160563811313541,30,30
+first_free_vs_blind,structural_core_blind,kv_first_free,final_holdout_ece,0.0518307013265,0.04245957435103083,0.06126310996491167,29,30
+first_free_vs_blind,structural_core_blind,kv_first_free,final_holdout_accuracy,0.82625,0.8179166666666667,0.8345833333333333,30,30
+annealed_vs_blind,structural_core_blind,kv_annealed_router,final_holdout_nll,1.6450584495404668,1.6395349418664418,1.6507967679817948,30,30
+annealed_vs_blind,structural_core_blind,kv_annealed_router,final_holdout_brier,0.8140849080995001,0.8121870324387576,0.8160482716129034,30,30
+annealed_vs_blind,structural_core_blind,kv_annealed_router,final_holdout_ece,0.0518307013265,0.042345963315725835,0.06113014252686,29,30
+annealed_vs_blind,structural_core_blind,kv_annealed_router,final_holdout_accuracy,0.82625,0.818125,0.8345833333333333,30,30
+annealed_vs_hard,kv_hard_router,kv_annealed_router,final_holdout_nll,0.0,0.0,0.0,0,30
+annealed_vs_hard,kv_hard_router,kv_annealed_router,final_holdout_brier,0.0,0.0,0.0,0,30
+annealed_vs_hard,kv_hard_router,kv_annealed_router,final_holdout_ece,0.0,0.0,0.0,0,30
+annealed_vs_hard,kv_hard_router,kv_annealed_router,final_holdout_accuracy,0.0,0.0,0.0,0,30
+annealed_vs_fixed,kv_fixed_position,kv_annealed_router,final_holdout_nll,0.0,0.0,0.0,0,30
+annealed_vs_fixed,kv_fixed_position,kv_annealed_router,final_holdout_brier,0.0,0.0,0.0,0,30
+annealed_vs_fixed,kv_fixed_position,kv_annealed_router,final_holdout_ece,0.0,0.0,0.0,0,30
+annealed_vs_fixed,kv_fixed_position,kv_annealed_router,final_holdout_accuracy,0.0,0.0,0.0,0,30
