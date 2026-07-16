@@ -43,6 +43,8 @@ jobs:
         run: |
           set -euo pipefail
           git apply /tmp/phase67.patch
+          rm -f .github/workflows/phase6-experiments.yml
+          rm -f .github/workflows/phase7-experiments.yml
           rm -rf .phase7-bootstrap
           git diff --check
           git config user.name 'github-actions[bot]'
