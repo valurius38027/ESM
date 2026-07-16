@@ -83,6 +83,18 @@ sgw::ExperimentCondition default_condition_for_preset(
       return sgw::ExperimentCondition::structural_mediation_linear;
     case sgw::ModelPreset::structural_mediation_bounded:
       return sgw::ExperimentCondition::structural_mediation_bounded;
+    case sgw::ModelPreset::structural_kv_exact:
+      return sgw::ExperimentCondition::structural_kv_exact;
+    case sgw::ModelPreset::structural_kv_learned:
+      return sgw::ExperimentCondition::structural_kv_learned;
+    case sgw::ModelPreset::kv_fixed_position:
+      return sgw::ExperimentCondition::kv_fixed_position;
+    case sgw::ModelPreset::kv_first_free:
+      return sgw::ExperimentCondition::kv_first_free;
+    case sgw::ModelPreset::kv_hard_router:
+      return sgw::ExperimentCondition::kv_hard_router;
+    case sgw::ModelPreset::kv_annealed_router:
+      return sgw::ExperimentCondition::kv_annealed_router;
   }
   return sgw::ExperimentCondition::core_small;
 }
@@ -100,12 +112,16 @@ Options parse_options(int argc, char** argv) {
              "core_content_blind|mediation_final_only|"
              "mediation_aux_annealed|structural_core_full|"
              "structural_core_blind|structural_mediation_linear|"
-             "structural_mediation_bounded] "
+             "structural_mediation_bounded|structural_kv_exact|"
+             "structural_kv_learned|kv_fixed_position|kv_first_free|"
+             "kv_hard_router|kv_annealed_router] "
              "[--preset core_small|core_compute_matched|core_param_matched|"
              "sgw|sgw_broadcast_forced|core_full_content|"
              "core_content_blind|mediation_fixed|structural_core_full|"
              "structural_core_blind|structural_mediation_linear|"
-             "structural_mediation_bounded] [--mode core_only|sgw] [--seed N] "
+             "structural_mediation_bounded|structural_kv_exact|"
+             "structural_kv_learned|kv_fixed_position|kv_first_free|"
+             "kv_hard_router|kv_annealed_router] [--mode core_only|sgw] [--seed N] "
              "[--steps N] [--batch-size N] [--train-count N] "
              "[--holdout-count N] [--output PATH] "
              "[--causal-output PATH]\n";
@@ -172,6 +188,17 @@ double window_mean(const std::vector<double>& values, bool first) {
   return sum / static_cast<double>(count);
 }
 
+double tail_mean(const std::vector<double>& values, std::size_t count) {
+  if (values.empty() || count == 0) return 0.0;
+  count = std::min(count, values.size());
+  const std::size_t begin = values.size() - count;
+  double sum = 0.0;
+  for (std::size_t index = begin; index < values.size(); ++index) {
+    sum += values[index];
+  }
+  return sum / static_cast<double>(count);
+}
+
 double window_mean_ending_at(const std::vector<double>& values,
                              std::size_t end_exclusive) {
   if (values.empty() || end_exclusive == 0) {
@@ -207,7 +234,13 @@ bool is_structural_condition(sgw::ExperimentCondition condition) noexcept {
   return condition == sgw::ExperimentCondition::structural_core_full ||
          condition == sgw::ExperimentCondition::structural_core_blind ||
          condition == sgw::ExperimentCondition::structural_mediation_linear ||
-         condition == sgw::ExperimentCondition::structural_mediation_bounded;
+         condition == sgw::ExperimentCondition::structural_mediation_bounded ||
+         condition == sgw::ExperimentCondition::structural_kv_exact ||
+         condition == sgw::ExperimentCondition::structural_kv_learned ||
+         condition == sgw::ExperimentCondition::kv_fixed_position ||
+         condition == sgw::ExperimentCondition::kv_first_free ||
+         condition == sgw::ExperimentCondition::kv_hard_router ||
+         condition == sgw::ExperimentCondition::kv_annealed_router;
 }
 
 sgw::BindingTaskConfig task_config(sgw::ExperimentCondition condition) {
@@ -305,7 +338,12 @@ void write_primary_csv(const Options& options,
          "initial_holdout_ece,final_train_ece,final_holdout_ece,"
          "final_train_max_confidence,final_holdout_max_confidence,"
          "final_train_true_class_probability,"
-         "final_holdout_true_class_probability\n";
+         "final_holdout_true_class_probability,read_slot_load,"
+         "write_slot_load,mean_write_collision_rate,mean_routing_entropy,"
+         "mean_routing_disagreement_rate,router_initial_temperature,"
+         "router_final_temperature,router_anneal_steps,"
+         "final_200_collision_rate,final_200_routing_entropy,"
+         "final_200_disagreement_rate\n";
   output << std::fixed << std::setprecision(12)
          << sgw::model_preset_name(options.preset) << ',' << options.seed << ','
          << options.steps << ',' << options.batch_size << ','
@@ -347,7 +385,18 @@ void write_primary_csv(const Options& options,
          << ',' << final_train.mean_max_confidence << ','
          << final_holdout.mean_max_confidence << ','
          << final_train.mean_true_class_probability << ','
-         << final_holdout.mean_true_class_probability << '\n';
+         << final_holdout.mean_true_class_probability << ','
+         << mechanism_load_text(final_holdout.read_slot_load) << ','
+         << mechanism_load_text(final_holdout.write_slot_load) << ','
+         << final_holdout.mean_write_collision_rate << ','
+         << final_holdout.mean_routing_entropy << ','
+         << final_holdout.mean_routing_disagreement_rate << ','
+         << model.config().key_value_router_initial_temperature << ','
+         << model.config().key_value_router_final_temperature << ','
+         << model.config().key_value_router_anneal_steps << ','
+         << tail_mean(history.routing_collision_rate, 200) << ','
+         << tail_mean(history.routing_entropy, 200) << ','
+         << tail_mean(history.routing_disagreement_rate, 200) << '\n';
 }
 
 void write_causal_csv(const Options& options, sgw::SgwEsmModel& model,
@@ -366,9 +415,24 @@ void write_causal_csv(const Options& options, sgw::SgwEsmModel& model,
     interventions.push_back(sgw::ForwardIntervention::no_mechanism_output);
     interventions.push_back(sgw::ForwardIntervention::workspace_disconnected);
   }
-  if (model.config().fixed_binding_mediation) {
+  if (model.config().fixed_binding_mediation ||
+      model.config().key_value_mode != sgw::KeyValueMediationMode::none) {
     interventions.push_back(sgw::ForwardIntervention::no_workspace_writes);
     interventions.push_back(sgw::ForwardIntervention::zero_reader_inbox);
+  }
+  if (model.config().key_value_mode != sgw::KeyValueMediationMode::none) {
+    interventions.push_back(
+        sgw::ForwardIntervention::permuted_workspace_keys);
+    interventions.push_back(sgw::ForwardIntervention::zero_query_key);
+    if (model.config().key_value_write_routing !=
+        sgw::KeyValueWriteRoutingMode::fixed_position) {
+      interventions.push_back(
+          sgw::ForwardIntervention::randomized_write_slots);
+      interventions.push_back(
+          sgw::ForwardIntervention::cleared_writer_assignment);
+      interventions.push_back(
+          sgw::ForwardIntervention::allow_write_collisions);
+    }
   }
   interventions.push_back(sgw::ForwardIntervention::permuted_recipients);
   std::vector<sgw::EvaluationMetrics> metrics(interventions.size());
@@ -391,7 +455,9 @@ void write_causal_csv(const Options& options, sgw::SgwEsmModel& model,
          "condition,holdout_brier,holdout_ece,holdout_max_confidence,"
          "holdout_true_class_probability,brier_delta_vs_intact,"
          "ece_delta_vs_intact,max_confidence_delta_vs_intact,"
-         "true_class_probability_delta_vs_intact\n";
+         "true_class_probability_delta_vs_intact,read_slot_load,"
+         "write_slot_load,mean_write_collision_rate,mean_routing_entropy,"
+         "mean_routing_disagreement_rate\n";
   output << std::fixed << std::setprecision(12);
   for (std::size_t index = 0; index < interventions.size(); ++index) {
     const auto& current = metrics[index];
@@ -414,7 +480,11 @@ void write_causal_csv(const Options& options, sgw::SgwEsmModel& model,
            << current.mean_max_confidence - intact.mean_max_confidence << ','
            << current.mean_true_class_probability -
                   intact.mean_true_class_probability
-           << '\n';
+           << ',' << mechanism_load_text(current.read_slot_load) << ','
+           << mechanism_load_text(current.write_slot_load) << ','
+           << current.mean_write_collision_rate << ','
+           << current.mean_routing_entropy << ','
+           << current.mean_routing_disagreement_rate << '\n';
   }
 }
 

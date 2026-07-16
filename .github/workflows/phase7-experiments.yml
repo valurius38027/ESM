@@ -1,0 +1,99 @@
+name: Phase 7 Learned Slot Routing Experiments
+
+on:
+  workflow_dispatch:
+    inputs:
+      steps:
+        description: Training steps per condition
+        required: false
+        default: "800"
+      seed_count:
+        description: Total paired seeds; must be divisible by 6
+        required: false
+        default: "30"
+
+permissions:
+  contents: read
+
+jobs:
+  shard:
+    name: Seeds ${{ matrix.shard }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure release build
+        run: cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build-release --parallel 2
+      - name: Run paired shard
+        env:
+          REQUESTED_STEPS: ${{ inputs.steps || '800' }}
+          REQUESTED_SEEDS: ${{ inputs.seed_count || '30' }}
+          SHARD_INDEX: ${{ matrix.shard }}
+        run: |
+          if (( REQUESTED_SEEDS % 6 != 0 )); then
+            echo "seed_count must be divisible by 6" >&2
+            exit 2
+          fi
+          per_shard=$((REQUESTED_SEEDS / 6))
+          seed_start=$((SHARD_INDEX * per_shard))
+          scripts/run_phase7_shard.sh \
+            build-release "$seed_start" "$per_shard" "$REQUESTED_STEPS" \
+            8 160 160 results/phase7-shard
+      - name: Upload shard
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase7-shard-${{ matrix.shard }}
+          path: results/phase7-shard/
+          if-no-files-found: error
+          retention-days: 30
+
+  aggregate:
+    name: Aggregate formal results
+    needs: shard
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all shards
+        uses: actions/download-artifact@v4
+        with:
+          pattern: phase7-shard-*
+          path: results/merged-phase7
+          merge-multiple: true
+      - name: Aggregate
+        env:
+          REQUESTED_SEEDS: ${{ inputs.seed_count || '30' }}
+        run: |
+          python3 scripts/aggregate_phase7.py \
+            --raw-dir results/merged-phase7/raw \
+            --causal-dir results/merged-phase7/causal \
+            --output-dir results/phase7-formal \
+            --seed-start 0 --seed-count "$REQUESTED_SEEDS" \
+            --bootstrap-replicates 50000
+          cat results/phase7-formal/phase7_summary.csv >> "$GITHUB_STEP_SUMMARY"
+          printf '\n' >> "$GITHUB_STEP_SUMMARY"
+          cat results/phase7-formal/phase7_paired.csv >> "$GITHUB_STEP_SUMMARY"
+          printf '\n' >> "$GITHUB_STEP_SUMMARY"
+          cat results/phase7-formal/phase7_causal_comparisons.csv >> "$GITHUB_STEP_SUMMARY"
+          printf '\n' >> "$GITHUB_STEP_SUMMARY"
+          cat results/phase7-formal/phase7_manifest.json >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify checksums
+        working-directory: results/phase7-formal
+        run: sha256sum --check SHA256SUMS
+      - name: Upload formal results
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase7-formal-results
+          path: |
+            results/phase7-formal/
+            results/merged-phase7/raw/
+            results/merged-phase7/causal/
+            results/merged-phase7/logs/
+          if-no-files-found: error
+          retention-days: 90

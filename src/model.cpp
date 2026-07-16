@@ -140,6 +140,16 @@ std::string_view forward_intervention_name(
       return "zero_reader_inbox";
     case ForwardIntervention::permuted_recipients:
       return "permuted_recipients";
+    case ForwardIntervention::permuted_workspace_keys:
+      return "permuted_workspace_keys";
+    case ForwardIntervention::zero_query_key:
+      return "zero_query_key";
+    case ForwardIntervention::randomized_write_slots:
+      return "randomized_write_slots";
+    case ForwardIntervention::cleared_writer_assignment:
+      return "cleared_writer_assignment";
+    case ForwardIntervention::allow_write_collisions:
+      return "allow_write_collisions";
   }
   return "unknown";
 }
@@ -161,6 +171,20 @@ std::size_t estimated_step_madds(const ModelConfig& config) {
   const std::size_t k = config.active_mechanisms;
   const std::size_t q = config.workspace_writers;
   const std::size_t c = config.output_classes;
+
+  if (config.key_value_mode == KeyValueMediationMode::symbolic_exact) {
+    return c;
+  }
+  if (config.key_value_mode == KeyValueMediationMode::learned_tied) {
+    std::size_t total = b * config.key_dim + c * config.value_dim;
+    if (config.key_value_write_routing ==
+            KeyValueWriteRoutingMode::hard_learned ||
+        config.key_value_write_routing ==
+            KeyValueWriteRoutingMode::annealed_learned) {
+      total += b * config.key_dim;
+    }
+    return total;
+  }
 
   std::size_t total = s * s;
   if (config.spine_reads_embedding) {
@@ -212,6 +236,26 @@ SgwEsmModel::SgwEsmModel(ModelConfig config, std::uint64_t seed)
   const std::size_t b = config_.workspace_slots;
   const std::size_t w = config_.workspace_dim;
   const std::size_t c = config_.output_classes;
+
+  if (config_.key_value_mode != KeyValueMediationMode::none) {
+    if (config_.key_value_mode == KeyValueMediationMode::learned_tied) {
+      kv_entity_codebook_ = &parameters_.add_xavier(
+          "kv_entity_codebook", config_.entity_count, config_.key_dim,
+          generator);
+      kv_value_codebook_ = &parameters_.add_xavier(
+          "kv_value_codebook", config_.value_count, config_.value_dim,
+          generator);
+      if (config_.key_value_write_routing ==
+              KeyValueWriteRoutingMode::hard_learned ||
+          config_.key_value_write_routing ==
+              KeyValueWriteRoutingMode::annealed_learned) {
+        kv_slot_codebook_ = &parameters_.add_xavier(
+            "kv_slot_codebook", config_.workspace_slots, config_.key_dim,
+            generator);
+      }
+    }
+    return;
+  }
 
   if (config_.spine_reads_embedding || !config_.core_only) {
     embedding_ =
@@ -305,11 +349,413 @@ const ParameterSet& SgwEsmModel::parameters() const noexcept {
   return parameters_;
 }
 
+void SgwEsmModel::set_key_value_routing_step(std::size_t step) noexcept {
+  key_value_routing_step_ = step;
+}
+
+std::size_t SgwEsmModel::key_value_routing_step() const noexcept {
+  return key_value_routing_step_;
+}
+
+double SgwEsmModel::key_value_router_temperature() const noexcept {
+  if (config_.key_value_write_routing !=
+          KeyValueWriteRoutingMode::annealed_learned ||
+      key_value_routing_step_ >= config_.key_value_router_anneal_steps) {
+    return config_.key_value_router_final_temperature;
+  }
+  if (config_.key_value_router_anneal_steps <= 1) {
+    return config_.key_value_router_final_temperature;
+  }
+  const double fraction = static_cast<double>(key_value_routing_step_) /
+      static_cast<double>(config_.key_value_router_anneal_steps - 1);
+  return config_.key_value_router_initial_temperature +
+      fraction * (config_.key_value_router_final_temperature -
+                  config_.key_value_router_initial_temperature);
+}
+
+bool SgwEsmModel::key_value_router_uses_surrogate() const noexcept {
+  return config_.key_value_write_routing ==
+             KeyValueWriteRoutingMode::annealed_learned &&
+         key_value_routing_step_ < config_.key_value_router_anneal_steps;
+}
+
+SequenceResult SgwEsmModel::forward_key_value_sequence(
+    ad::Tape& tape, std::span<const int> tokens, bool capture_trace,
+    ForwardIntervention intervention) {
+  const std::size_t bindings = config_.mediation_binding_count;
+  const std::size_t expected_length = 2 * bindings + 2;
+  if (tokens.size() != expected_length) {
+    throw std::invalid_argument(
+        "key-value mediation requires the configured binding sequence length");
+  }
+  for (const int token : tokens) {
+    if (token < 0 || static_cast<std::size_t>(token) >= config_.vocab_size) {
+      throw std::out_of_range("input token out of vocabulary range");
+    }
+  }
+
+  const std::size_t b = config_.workspace_slots;
+  const std::size_t w = config_.workspace_dim;
+  const std::size_t key_dim = config_.key_dim;
+  const std::size_t value_dim = config_.value_dim;
+  const std::size_t reader = bindings;
+  const std::size_t missing = config_.vocab_size;
+  const bool writes_enabled =
+      intervention != ForwardIntervention::no_workspace_writes;
+  const bool persists =
+      intervention != ForwardIntervention::no_workspace_persistence;
+  const bool output_enabled =
+      intervention != ForwardIntervention::no_broadcast &&
+      intervention != ForwardIntervention::zero_reader_inbox &&
+      intervention != ForwardIntervention::workspace_disconnected &&
+      intervention != ForwardIntervention::no_workspace_output &&
+      intervention != ForwardIntervention::no_mechanism_output;
+
+  ModelState state;
+  state.spine = zero_vector(tape, config_.spine_dim);
+  state.mechanisms =
+      zero_vector(tape, config_.mechanism_count * config_.mechanism_dim);
+  state.workspace = zero_vector(tape, b * w);
+  state.inboxes = zero_vector(tape, config_.mechanism_count * w);
+  state.active_summary = zero_vector(tape, value_dim);
+  std::vector<std::size_t> slot_entities(b, missing);
+  std::vector<std::size_t> slot_values(b, missing);
+  std::vector<bool> occupied(b, false);
+  std::vector<std::size_t> binding_slots(bindings, missing);
+  std::vector<std::vector<ad::Var>> binding_gates(bindings);
+  std::vector<StepTrace> traces;
+  if (capture_trace) traces.reserve(tokens.size());
+
+  const auto normalize = [&](std::span<const ad::Var> input) {
+    ad::Var sum_squares = tape.constant(1.0e-12);
+    for (const ad::Var value : input) {
+      sum_squares = sum_squares + value * value;
+    }
+    const ad::Var norm = ad::exp(tape.constant(0.5) * ad::log(sum_squares));
+    std::vector<ad::Var> result;
+    result.reserve(input.size());
+    for (const ad::Var value : input) result.push_back(value / norm);
+    return result;
+  };
+  const auto parameter_row = [&](Parameter& parameter, std::size_t row) {
+    std::vector<ad::Var> values;
+    values.reserve(parameter.columns());
+    for (std::size_t column = 0; column < parameter.columns(); ++column) {
+      values.push_back(matrix_entry(tape, parameter, row, column));
+    }
+    return values;
+  };
+  const auto dot = [&](std::span<const ad::Var> lhs,
+                       std::span<const ad::Var> rhs) {
+    if (lhs.size() != rhs.size()) {
+      throw std::logic_error("key-value dot shape mismatch");
+    }
+    ad::Var result = tape.constant(0.0);
+    for (std::size_t index = 0; index < lhs.size(); ++index) {
+      result = result + lhs[index] * rhs[index];
+    }
+    return result;
+  };
+  const auto hard_gates = [&](std::size_t selected) {
+    std::vector<ad::Var> gates;
+    gates.reserve(b);
+    for (std::size_t slot = 0; slot < b; ++slot) {
+      gates.push_back(tape.constant(slot == selected ? 1.0 : 0.0));
+    }
+    return gates;
+  };
+  struct RouteDecision {
+    std::size_t selected{0};
+    std::vector<ad::Var> gates;
+    std::size_t collisions{0};
+    double entropy{0.0};
+    std::size_t disagreements{0};
+  };
+  const auto choose_write_route = [&](std::size_t binding,
+                                      std::size_t entity_token) {
+    RouteDecision decision;
+    decision.selected = binding;
+    if (config_.key_value_write_routing ==
+        KeyValueWriteRoutingMode::first_free) {
+      const auto found = std::find(occupied.begin(), occupied.end(), false);
+      if (found == occupied.end()) {
+        throw std::logic_error("key-value workspace has no free write slot");
+      }
+      decision.selected =
+          static_cast<std::size_t>(found - occupied.begin());
+      decision.gates = hard_gates(decision.selected);
+    } else if (config_.key_value_write_routing ==
+                   KeyValueWriteRoutingMode::hard_learned ||
+               config_.key_value_write_routing ==
+                   KeyValueWriteRoutingMode::annealed_learned) {
+      const auto entity_key = normalize(
+          parameter_row(*kv_entity_codebook_, entity_token));
+      std::vector<std::size_t> available;
+      std::vector<ad::Var> scores;
+      for (std::size_t slot = 0; slot < b; ++slot) {
+        if (occupied[slot] &&
+            intervention != ForwardIntervention::allow_write_collisions) {
+          continue;
+        }
+        available.push_back(slot);
+        const auto slot_code = normalize(parameter_row(*kv_slot_codebook_, slot));
+        scores.push_back(dot(entity_key, slot_code));
+      }
+      if (available.empty()) {
+        throw std::logic_error("key-value workspace has no available route");
+      }
+      const std::size_t local = select_vars(scores, 1).front();
+      decision.selected = available[local];
+      decision.gates = hard_gates(decision.selected);
+
+      const double temperature = key_value_router_temperature();
+      double maximum = scores.front().value() / temperature;
+      for (const ad::Var score : scores) {
+        maximum = std::max(maximum, score.value() / temperature);
+      }
+      const ad::Var maximum_constant = tape.constant(maximum);
+      std::vector<ad::Var> probabilities;
+      ad::Var denominator = tape.constant(0.0);
+      for (const ad::Var score : scores) {
+        const ad::Var numerator = ad::exp(
+            score / tape.constant(temperature) - maximum_constant);
+        probabilities.push_back(numerator);
+        denominator = denominator + numerator;
+      }
+      for (ad::Var& probability : probabilities) {
+        probability = probability / denominator;
+        const double numeric = probability.value();
+        if (numeric > 0.0) decision.entropy -= numeric * std::log(numeric);
+      }
+      if (key_value_router_uses_surrogate()) {
+        for (std::size_t index = 0; index < available.size(); ++index) {
+          const ad::Var probability = probabilities[index];
+          const std::size_t slot = available[index];
+          decision.gates[slot] = decision.gates[slot] + probability -
+                                 tape.constant(probability.value());
+        }
+      }
+    } else {
+      decision.gates = hard_gates(decision.selected);
+    }
+
+    if (intervention == ForwardIntervention::randomized_write_slots) {
+      decision.selected = (decision.selected + 1) % b;
+      decision.gates = hard_gates(decision.selected);
+    } else if (intervention ==
+               ForwardIntervention::allow_write_collisions) {
+      decision.selected = 0;
+      decision.gates = hard_gates(decision.selected);
+    }
+    if (decision.selected >= b) {
+      throw std::logic_error("key-value write route is out of range");
+    }
+    if (occupied[decision.selected]) {
+      decision.collisions = 1;
+      if (intervention != ForwardIntervention::allow_write_collisions &&
+          intervention != ForwardIntervention::randomized_write_slots) {
+        throw std::logic_error("key-value write route collided");
+      }
+    }
+    occupied[decision.selected] = true;
+    return decision;
+  };
+
+  for (std::size_t step = 0; step < tokens.size(); ++step) {
+    if (!persists) {
+      state.workspace = zero_vector(tape, b * w);
+      std::fill(slot_entities.begin(), slot_entities.end(), missing);
+      std::fill(slot_values.begin(), slot_values.end(), missing);
+      std::fill(occupied.begin(), occupied.end(), false);
+    }
+    StepTrace trace;
+    if (capture_trace) {
+      trace.mechanism_state_before = snapshot(state.mechanisms);
+      trace.inbox_before = snapshot(state.inboxes);
+      trace.workspace_before = snapshot(state.workspace);
+      trace.estimated_madds = estimated_step_madds(config_);
+    }
+    const std::size_t mechanism = step < 2 * bindings ? step / 2 : reader;
+    trace.active_mechanisms.push_back(mechanism);
+    trace.recipients.push_back(reader);
+
+    if (step < 2 * bindings) {
+      const std::size_t binding = step / 2;
+      const std::size_t token = static_cast<std::size_t>(tokens[step]);
+      if (step % 2 == 0) {
+        if (token >= config_.entity_count) {
+          throw std::invalid_argument("key-value entity token is out of range");
+        }
+        RouteDecision decision = choose_write_route(binding, token);
+        const std::size_t slot = decision.selected;
+        binding_slots[binding] = slot;
+        binding_gates[binding] = std::move(decision.gates);
+        trace.writers.push_back(mechanism);
+        trace.writer_slots.push_back(slot);
+        trace.write_collisions += decision.collisions;
+        trace.routing_entropy += decision.entropy;
+        trace.routing_decisions += 1;
+        trace.hard_soft_disagreements += decision.disagreements;
+        if (writes_enabled) {
+          slot_entities[slot] = token;
+          std::vector<ad::Var> key;
+          if (config_.key_value_mode == KeyValueMediationMode::symbolic_exact) {
+            key.reserve(key_dim);
+            for (std::size_t component = 0; component < key_dim; ++component) {
+              key.push_back(tape.constant(component == token ? 1.0 : 0.0));
+            }
+          } else {
+            key = normalize(parameter_row(*kv_entity_codebook_, token));
+          }
+          for (std::size_t target = 0; target < b; ++target) {
+            for (std::size_t component = 0; component < key_dim; ++component) {
+              const std::size_t offset = target * w + component;
+              state.workspace[offset] = state.workspace[offset] +
+                  binding_gates[binding][target] * key[component];
+            }
+          }
+        }
+      } else {
+        std::size_t slot = binding_slots[binding];
+        if (intervention == ForwardIntervention::cleared_writer_assignment) {
+          slot = missing;
+        } else if (intervention ==
+                   ForwardIntervention::randomized_write_slots) {
+          slot = (slot + 1) % b;
+          binding_gates[binding] = hard_gates(slot);
+        }
+        if (slot != missing) {
+          trace.writers.push_back(mechanism);
+          trace.writer_slots.push_back(slot);
+        }
+        if (token < config_.entity_count ||
+            token >= config_.entity_count + config_.value_count) {
+          throw std::invalid_argument("key-value value token is out of range");
+        }
+        const std::size_t value_class = token - config_.entity_count;
+        if (writes_enabled && slot != missing) {
+          slot_values[slot] = value_class;
+          std::vector<ad::Var> value;
+          if (config_.key_value_mode == KeyValueMediationMode::symbolic_exact) {
+            value.reserve(value_dim);
+            for (std::size_t component = 0; component < value_dim; ++component) {
+              value.push_back(tape.constant(
+                  component == value_class ? 1.0 : 0.0));
+            }
+          } else {
+            value = normalize(parameter_row(*kv_value_codebook_, value_class));
+          }
+          for (std::size_t target = 0; target < b; ++target) {
+            for (std::size_t component = 0; component < value_dim; ++component) {
+              const std::size_t offset = target * w + key_dim + component;
+              state.workspace[offset] = state.workspace[offset] +
+                  binding_gates[binding][target] * value[component];
+            }
+          }
+        }
+      }
+    }
+
+    if (step + 1 == tokens.size()) {
+      const std::size_t query = static_cast<std::size_t>(tokens[step]);
+      if (query >= config_.entity_count) {
+        throw std::invalid_argument("key-value query token is out of range");
+      }
+      std::size_t selected_slot = 0;
+      if (config_.key_value_mode == KeyValueMediationMode::symbolic_exact) {
+        for (std::size_t slot = 0; slot < b; ++slot) {
+          const std::size_t key_slot =
+              intervention == ForwardIntervention::permuted_workspace_keys
+                  ? (slot + 1) % b
+                  : slot;
+          if (slot_entities[key_slot] == query) {
+            selected_slot = slot;
+            break;
+          }
+        }
+      } else {
+        std::vector<ad::Var> query_key;
+        if (intervention == ForwardIntervention::zero_query_key) {
+          query_key = zero_vector(tape, key_dim);
+        } else {
+          query_key = normalize(parameter_row(*kv_entity_codebook_, query));
+        }
+        std::vector<ad::Var> scores;
+        scores.reserve(b);
+        for (std::size_t slot = 0; slot < b; ++slot) {
+          const std::size_t key_slot =
+              intervention == ForwardIntervention::permuted_workspace_keys
+                  ? (slot + 1) % b
+                  : slot;
+          std::vector<ad::Var> slot_key;
+          slot_key.reserve(key_dim);
+          for (std::size_t component = 0; component < key_dim; ++component) {
+            slot_key.push_back(state.workspace[key_slot * w + component]);
+          }
+          scores.push_back(dot(query_key, slot_key));
+        }
+        selected_slot = select_vars(scores, 1).front();
+      }
+      trace.read_slots.push_back(selected_slot);
+      std::vector<ad::Var> retrieved;
+      retrieved.reserve(value_dim);
+      for (std::size_t component = 0; component < value_dim; ++component) {
+        retrieved.push_back(output_enabled
+            ? state.workspace[selected_slot * w + key_dim + component]
+            : tape.constant(0.0));
+      }
+      state.active_summary = retrieved;
+    }
+
+    if (capture_trace) {
+      trace.mechanism_state_after = snapshot(state.mechanisms);
+      trace.inbox_after = snapshot(state.inboxes);
+      trace.workspace_after = snapshot(state.workspace);
+      traces.push_back(std::move(trace));
+    }
+  }
+
+  std::vector<ad::Var> logits;
+  logits.reserve(config_.output_classes);
+  if (config_.key_value_mode == KeyValueMediationMode::symbolic_exact) {
+    std::size_t selected_value = missing;
+    const std::size_t query = static_cast<std::size_t>(tokens.back());
+    std::size_t selected_slot = 0;
+    for (std::size_t slot = 0; slot < b; ++slot) {
+      const std::size_t key_slot =
+          intervention == ForwardIntervention::permuted_workspace_keys
+              ? (slot + 1) % b
+              : slot;
+      if (slot_entities[key_slot] == query) {
+        selected_slot = slot;
+        break;
+      }
+    }
+    if (output_enabled) selected_value = slot_values[selected_slot];
+    for (std::size_t output = 0; output < config_.output_classes; ++output) {
+      logits.push_back(tape.constant(
+          output == selected_value ? config_.key_value_logit_scale : 0.0));
+    }
+  } else {
+    const auto retrieved = normalize(state.active_summary);
+    for (std::size_t output = 0; output < config_.output_classes; ++output) {
+      const auto code = normalize(parameter_row(*kv_value_codebook_, output));
+      logits.push_back(tape.constant(config_.key_value_logit_scale) *
+                       dot(retrieved, code));
+    }
+  }
+  return SequenceResult{std::move(logits), {}, std::move(state),
+                        std::move(traces)};
+}
+
 SequenceResult SgwEsmModel::forward_sequence(
     ad::Tape& tape, std::span<const int> tokens, bool capture_trace,
     ForwardIntervention intervention) {
   if (tokens.empty()) {
     throw std::invalid_argument("input sequence must not be empty");
+  }
+  if (config_.key_value_mode != KeyValueMediationMode::none) {
+    return forward_key_value_sequence(tape, tokens, capture_trace, intervention);
   }
   if (config_.fixed_binding_mediation &&
       tokens.size() != 2 * config_.mediation_binding_count + 2) {

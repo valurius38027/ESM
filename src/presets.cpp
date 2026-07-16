@@ -20,6 +20,12 @@ ExperimentCondition parse_experiment_condition(std::string_view value) {
   if (value == "structural_core_blind") return ExperimentCondition::structural_core_blind;
   if (value == "structural_mediation_linear") return ExperimentCondition::structural_mediation_linear;
   if (value == "structural_mediation_bounded") return ExperimentCondition::structural_mediation_bounded;
+  if (value == "structural_kv_exact") return ExperimentCondition::structural_kv_exact;
+  if (value == "structural_kv_learned") return ExperimentCondition::structural_kv_learned;
+  if (value == "kv_fixed_position") return ExperimentCondition::kv_fixed_position;
+  if (value == "kv_first_free") return ExperimentCondition::kv_first_free;
+  if (value == "kv_hard_router") return ExperimentCondition::kv_hard_router;
+  if (value == "kv_annealed_router") return ExperimentCondition::kv_annealed_router;
   throw std::invalid_argument("unknown experiment condition: " + std::string(value));
 }
 
@@ -39,6 +45,12 @@ std::string_view experiment_condition_name(ExperimentCondition condition) noexce
     case ExperimentCondition::structural_core_blind: return "structural_core_blind";
     case ExperimentCondition::structural_mediation_linear: return "structural_mediation_linear";
     case ExperimentCondition::structural_mediation_bounded: return "structural_mediation_bounded";
+    case ExperimentCondition::structural_kv_exact: return "structural_kv_exact";
+    case ExperimentCondition::structural_kv_learned: return "structural_kv_learned";
+    case ExperimentCondition::kv_fixed_position: return "kv_fixed_position";
+    case ExperimentCondition::kv_first_free: return "kv_first_free";
+    case ExperimentCondition::kv_hard_router: return "kv_hard_router";
+    case ExperimentCondition::kv_annealed_router: return "kv_annealed_router";
   }
   return "unknown";
 }
@@ -65,6 +77,18 @@ ModelPreset model_preset_for_condition(ExperimentCondition condition) noexcept {
       return ModelPreset::structural_mediation_linear;
     case ExperimentCondition::structural_mediation_bounded:
       return ModelPreset::structural_mediation_bounded;
+    case ExperimentCondition::structural_kv_exact:
+      return ModelPreset::structural_kv_exact;
+    case ExperimentCondition::structural_kv_learned:
+      return ModelPreset::structural_kv_learned;
+    case ExperimentCondition::kv_fixed_position:
+      return ModelPreset::kv_fixed_position;
+    case ExperimentCondition::kv_first_free:
+      return ModelPreset::kv_first_free;
+    case ExperimentCondition::kv_hard_router:
+      return ModelPreset::kv_hard_router;
+    case ExperimentCondition::kv_annealed_router:
+      return ModelPreset::kv_annealed_router;
   }
   return ModelPreset::core_small;
 }
@@ -96,6 +120,12 @@ ModelPreset parse_model_preset(std::string_view value) {
   if (value == "structural_core_blind") return ModelPreset::structural_core_blind;
   if (value == "structural_mediation_linear") return ModelPreset::structural_mediation_linear;
   if (value == "structural_mediation_bounded") return ModelPreset::structural_mediation_bounded;
+  if (value == "structural_kv_exact") return ModelPreset::structural_kv_exact;
+  if (value == "structural_kv_learned") return ModelPreset::structural_kv_learned;
+  if (value == "kv_fixed_position") return ModelPreset::kv_fixed_position;
+  if (value == "kv_first_free") return ModelPreset::kv_first_free;
+  if (value == "kv_hard_router") return ModelPreset::kv_hard_router;
+  if (value == "kv_annealed_router") return ModelPreset::kv_annealed_router;
   throw std::invalid_argument("unknown model preset: " + std::string(value));
 }
 
@@ -113,6 +143,12 @@ std::string_view model_preset_name(ModelPreset preset) noexcept {
     case ModelPreset::structural_core_blind: return "structural_core_blind";
     case ModelPreset::structural_mediation_linear: return "structural_mediation_linear";
     case ModelPreset::structural_mediation_bounded: return "structural_mediation_bounded";
+    case ModelPreset::structural_kv_exact: return "structural_kv_exact";
+    case ModelPreset::structural_kv_learned: return "structural_kv_learned";
+    case ModelPreset::kv_fixed_position: return "kv_fixed_position";
+    case ModelPreset::kv_first_free: return "kv_first_free";
+    case ModelPreset::kv_hard_router: return "kv_hard_router";
+    case ModelPreset::kv_annealed_router: return "kv_annealed_router";
   }
   return "unknown";
 }
@@ -182,6 +218,48 @@ ModelConfig make_model_config(ModelPreset preset, std::size_t vocab_size,
       config.spine_reads_workspace = false;
       config.output_reads_workspace = false;
       config.output_reads_mechanism = false;
+      break;
+    case ModelPreset::structural_kv_exact:
+    case ModelPreset::structural_kv_learned:
+    case ModelPreset::kv_fixed_position:
+    case ModelPreset::kv_first_free:
+    case ModelPreset::kv_hard_router:
+    case ModelPreset::kv_annealed_router:
+      config.embedding_dim = 1;
+      config.spine_dim = 1;
+      config.mechanism_count = 4;
+      config.mechanism_dim = 1;
+      config.workspace_slots = 3;
+      config.key_dim = 8;
+      config.value_dim = 8;
+      config.workspace_dim = config.key_dim + config.value_dim;
+      config.active_mechanisms = 1;
+      config.workspace_writers = 1;
+      config.broadcast_recipients = 1;
+      config.spine_reads_embedding = false;
+      config.spine_reads_workspace = false;
+      config.output_reads_spine = false;
+      config.output_reads_workspace = false;
+      config.output_reads_mechanism = true;
+      config.mediation_binding_count = 3;
+      config.entity_count = 6;
+      config.value_count = output_classes;
+      config.key_value_logit_scale = 6.0;
+      config.key_value_mode =
+          preset == ModelPreset::structural_kv_exact
+              ? KeyValueMediationMode::symbolic_exact
+              : KeyValueMediationMode::learned_tied;
+      if (preset == ModelPreset::kv_first_free) {
+        config.key_value_write_routing = KeyValueWriteRoutingMode::first_free;
+      } else if (preset == ModelPreset::kv_hard_router) {
+        config.key_value_write_routing = KeyValueWriteRoutingMode::hard_learned;
+      } else if (preset == ModelPreset::kv_annealed_router) {
+        config.key_value_write_routing =
+            KeyValueWriteRoutingMode::annealed_learned;
+      } else {
+        config.key_value_write_routing =
+            KeyValueWriteRoutingMode::fixed_position;
+      }
       break;
     case ModelPreset::structural_mediation_linear:
     case ModelPreset::structural_mediation_bounded:

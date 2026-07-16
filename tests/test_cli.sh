@@ -26,14 +26,14 @@ timeout 110s "$exe" "${common[@]}" --output "$second" \
 cmp "$first" "$second"
 cmp "$causal_first" "$causal_second"
 
-header='preset,seed,steps,batch_size,parameters,train_count,holdout_count,sequence_length,chance_nll,initial_train_nll,initial_holdout_nll,final_train_nll,final_holdout_nll,final_train_accuracy,final_holdout_accuracy,mean_estimated_madds_per_token,mean_active_mechanisms_per_token,mean_writers_per_token,mean_recipients_per_token,first_window_loss,last_window_loss,mechanism_load,role_mechanism_load,condition,workspace_aux_initial_weight,workspace_aux_anneal_steps,first_primary_window_loss,last_primary_window_loss,last_workspace_aux_window_loss,anneal_boundary_primary_window_loss,final_workspace_aux_weight,final_weighted_workspace_aux_window_loss,training_stream_samples,output_logit_bound,initial_train_brier,initial_holdout_brier,final_train_brier,final_holdout_brier,initial_train_ece,initial_holdout_ece,final_train_ece,final_holdout_ece,final_train_max_confidence,final_holdout_max_confidence,final_train_true_class_probability,final_holdout_true_class_probability'
+header='preset,seed,steps,batch_size,parameters,train_count,holdout_count,sequence_length,chance_nll,initial_train_nll,initial_holdout_nll,final_train_nll,final_holdout_nll,final_train_accuracy,final_holdout_accuracy,mean_estimated_madds_per_token,mean_active_mechanisms_per_token,mean_writers_per_token,mean_recipients_per_token,first_window_loss,last_window_loss,mechanism_load,role_mechanism_load,condition,workspace_aux_initial_weight,workspace_aux_anneal_steps,first_primary_window_loss,last_primary_window_loss,last_workspace_aux_window_loss,anneal_boundary_primary_window_loss,final_workspace_aux_weight,final_weighted_workspace_aux_window_loss,training_stream_samples,output_logit_bound,initial_train_brier,initial_holdout_brier,final_train_brier,final_holdout_brier,initial_train_ece,initial_holdout_ece,final_train_ece,final_holdout_ece,final_train_max_confidence,final_holdout_max_confidence,final_train_true_class_probability,final_holdout_true_class_probability,read_slot_load,write_slot_load,mean_write_collision_rate,mean_routing_entropy,mean_routing_disagreement_rate,router_initial_temperature,router_final_temperature,router_anneal_steps,final_200_collision_rate,final_200_routing_entropy,final_200_disagreement_rate'
 [[ $(head -n 1 "$first") == "$header" ]]
 [[ $(wc -l < "$first") -eq 2 ]]
 grep -q '^sgw,41,3,2,2182,' "$first"
 grep -q 'entity:' "$first"
 grep -q 'query_entity:' "$first"
 
-causal_header='seed,intervention,holdout_nll,holdout_accuracy,nll_delta_vs_intact,accuracy_delta_vs_intact,mean_active_mechanisms_per_token,mean_writers_per_token,mean_recipients_per_token,mechanism_load,role_mechanism_load,condition,holdout_brier,holdout_ece,holdout_max_confidence,holdout_true_class_probability,brier_delta_vs_intact,ece_delta_vs_intact,max_confidence_delta_vs_intact,true_class_probability_delta_vs_intact'
+causal_header='seed,intervention,holdout_nll,holdout_accuracy,nll_delta_vs_intact,accuracy_delta_vs_intact,mean_active_mechanisms_per_token,mean_writers_per_token,mean_recipients_per_token,mechanism_load,role_mechanism_load,condition,holdout_brier,holdout_ece,holdout_max_confidence,holdout_true_class_probability,brier_delta_vs_intact,ece_delta_vs_intact,max_confidence_delta_vs_intact,true_class_probability_delta_vs_intact,read_slot_load,write_slot_load,mean_write_collision_rate,mean_routing_entropy,mean_routing_disagreement_rate'
 [[ $(head -n 1 "$causal_first") == "$causal_header" ]]
 [[ $(wc -l < "$causal_first") -eq 6 ]]
 for intervention in intact no_broadcast no_workspace_persistence no_workspace_output permuted_recipients; do
@@ -111,3 +111,47 @@ grep -q '^structural_mediation_bounded,29,3,2,15650,' "$structural_bounded"
 awk -F, 'NR==2 { exit !($33 == 6 && $34 == "0.000000000000") }' "$structural_linear"
 awk -F, 'NR==2 { exit !($33 == 6 && $34 == "1.000000000000") }' "$structural_bounded"
 [[ $(wc -l < "$structural_causal") -eq 11 ]]
+
+
+kv_exact="$out_dir/structural-kv-exact.csv"
+kv_learned="$out_dir/structural-kv-learned.csv"
+kv_learned_second="$out_dir/structural-kv-learned-second.csv"
+kv_causal="$out_dir/structural-kv-causal.csv"
+kv_causal_second="$out_dir/structural-kv-causal-second.csv"
+timeout 110s "$exe" --condition structural_kv_exact --seed 31 \
+  --steps 2 --batch-size 2 --train-count 12 --holdout-count 6 \
+  --output "$kv_exact" >/dev/null
+timeout 110s "$exe" --condition structural_kv_learned --seed 31 \
+  --steps 2 --batch-size 2 --train-count 12 --holdout-count 6 \
+  --output "$kv_learned" --causal-output "$kv_causal" >/dev/null
+timeout 110s "$exe" --condition structural_kv_learned --seed 31 \
+  --steps 2 --batch-size 2 --train-count 12 --holdout-count 6 \
+  --output "$kv_learned_second" --causal-output "$kv_causal_second" >/dev/null
+cmp "$kv_learned" "$kv_learned_second"
+cmp "$kv_causal" "$kv_causal_second"
+grep -q '^structural_kv_exact,31,2,2,0,' "$kv_exact"
+grep -q '^structural_kv_learned,31,2,2,88,' "$kv_learned"
+awk -F, 'NR==2 { exit !($33 == 4 && $15 >= 0.99 && $47 != "") }' "$kv_exact"
+[[ $(wc -l < "$kv_causal") -eq 13 ]]
+for intervention in intact no_broadcast no_workspace_persistence no_workspace_output no_spine_workspace no_mechanism_output workspace_disconnected no_workspace_writes zero_reader_inbox permuted_workspace_keys zero_query_key permuted_recipients; do
+  grep -q "^31,$intervention," "$kv_causal"
+done
+
+
+phase7="$out_dir/phase7-annealed.csv"
+phase7_second="$out_dir/phase7-annealed-second.csv"
+phase7_causal="$out_dir/phase7-annealed-causal.csv"
+phase7_causal_second="$out_dir/phase7-annealed-causal-second.csv"
+timeout 110s "$exe" --condition kv_annealed_router --seed 37 \
+  --steps 4 --batch-size 2 --train-count 12 --holdout-count 6 \
+  --output "$phase7" --causal-output "$phase7_causal" >/dev/null
+timeout 110s "$exe" --condition kv_annealed_router --seed 37 \
+  --steps 4 --batch-size 2 --train-count 12 --holdout-count 6 \
+  --output "$phase7_second" --causal-output "$phase7_causal_second" >/dev/null
+cmp "$phase7" "$phase7_second"
+cmp "$phase7_causal" "$phase7_causal_second"
+grep -q '^kv_annealed_router,37,4,2,112,' "$phase7"
+grep -q ',kv_annealed_router,' "$phase7"
+for intervention in randomized_write_slots cleared_writer_assignment allow_write_collisions; do
+  grep -q "^37,$intervention," "$phase7_causal"
+done

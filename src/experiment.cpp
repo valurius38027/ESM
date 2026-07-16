@@ -150,6 +150,8 @@ EvaluationMetrics evaluate(SgwEsmModel& model,
       static_cast<std::size_t>(TokenRole::count);
   metrics.role_mechanism_load.assign(
       role_count * model.config().mechanism_count, 0);
+  metrics.read_slot_load.assign(model.config().workspace_slots, 0);
+  metrics.write_slot_load.assign(model.config().workspace_slots, 0);
   double total_nll = 0.0;
   double total_brier = 0.0;
   double total_max_confidence = 0.0;
@@ -164,6 +166,10 @@ EvaluationMetrics evaluate(SgwEsmModel& model,
   std::size_t total_active = 0;
   std::size_t total_writers = 0;
   std::size_t total_recipients = 0;
+  std::size_t total_write_collisions = 0;
+  double total_routing_entropy = 0.0;
+  std::size_t total_routing_decisions = 0;
+  std::size_t total_routing_disagreements = 0;
 
   for (const BindingSample& sample : samples) {
     ad::Tape tape;
@@ -205,6 +211,13 @@ EvaluationMetrics evaluate(SgwEsmModel& model,
         total_active += trace.active_mechanisms.size();
         total_writers += trace.writers.size();
         total_recipients += trace.recipients.size();
+        total_write_collisions += trace.write_collisions;
+        total_routing_entropy += trace.routing_entropy;
+        total_routing_decisions += trace.routing_decisions;
+        total_routing_disagreements += trace.hard_soft_disagreements;
+        for (const std::size_t slot : trace.writer_slots) {
+          ++metrics.write_slot_load.at(slot);
+        }
         const std::size_t role =
             static_cast<std::size_t>(sample.roles[step]);
         if (role >= role_count) {
@@ -214,6 +227,9 @@ EvaluationMetrics evaluate(SgwEsmModel& model,
           ++metrics.mechanism_load.at(mechanism);
           ++metrics.role_mechanism_load.at(
               role * model.config().mechanism_count + mechanism);
+        }
+        for (const std::size_t slot : trace.read_slots) {
+          ++metrics.read_slot_load.at(slot);
         }
       }
     }
@@ -243,6 +259,15 @@ EvaluationMetrics evaluate(SgwEsmModel& model,
         static_cast<double>(total_writers) / denominator;
     metrics.mean_recipients_per_token =
         static_cast<double>(total_recipients) / denominator;
+    if (total_routing_decisions != 0) {
+      const double route_count =
+          static_cast<double>(total_routing_decisions);
+      metrics.mean_write_collision_rate =
+          static_cast<double>(total_write_collisions) / route_count;
+      metrics.mean_routing_entropy = total_routing_entropy / route_count;
+      metrics.mean_routing_disagreement_rate =
+          static_cast<double>(total_routing_disagreements) / route_count;
+    }
   }
   return metrics;
 }
@@ -264,21 +289,39 @@ TrainingHistory train_with_provider(
   history.workspace_aux_weight.reserve(training_config.steps);
   history.gradient_norm.reserve(training_config.steps);
   history.clip_scale.reserve(training_config.steps);
+  history.routing_collision_rate.reserve(training_config.steps);
+  history.routing_entropy.reserve(training_config.steps);
+  history.routing_disagreement_rate.reserve(training_config.steps);
 
   for (std::size_t step = 0; step < training_config.steps; ++step) {
+    model.set_key_value_routing_step(step);
     model.parameters().zero_grad();
     const double auxiliary_weight =
         workspace_aux_weight_at_step(training_config, step);
     double loss_sum = 0.0;
     double primary_loss_sum = 0.0;
     double auxiliary_loss_sum = 0.0;
+    std::size_t routing_collisions = 0;
+    double routing_entropy = 0.0;
+    std::size_t routing_decisions = 0;
+    std::size_t routing_disagreements = 0;
     for (std::size_t batch_index = 0;
          batch_index < training_config.batch_size; ++batch_index) {
       const BindingSample sample = next_sample();
       ++history.samples_consumed;
       ad::Tape tape;
+      const bool capture_routing =
+          model.config().key_value_mode != KeyValueMediationMode::none;
       const SequenceResult result =
-          model.forward_sequence(tape, sample.tokens, false);
+          model.forward_sequence(tape, sample.tokens, capture_routing);
+      if (capture_routing) {
+        for (const StepTrace& trace : result.traces) {
+          routing_collisions += trace.write_collisions;
+          routing_entropy += trace.routing_entropy;
+          routing_decisions += trace.routing_decisions;
+          routing_disagreements += trace.hard_soft_disagreements;
+        }
+      }
       const ad::Var primary_loss =
           cross_entropy_loss(tape, result.logits, sample.target_class);
       ad::Var total_loss = primary_loss;
@@ -317,6 +360,18 @@ TrainingHistory train_with_provider(
     history.workspace_aux_weight.push_back(auxiliary_weight);
     history.gradient_norm.push_back(gradient_norm);
     history.clip_scale.push_back(optimizer.last_clip_scale());
+    if (routing_decisions == 0) {
+      history.routing_collision_rate.push_back(0.0);
+      history.routing_entropy.push_back(0.0);
+      history.routing_disagreement_rate.push_back(0.0);
+    } else {
+      const double route_count = static_cast<double>(routing_decisions);
+      history.routing_collision_rate.push_back(
+          static_cast<double>(routing_collisions) / route_count);
+      history.routing_entropy.push_back(routing_entropy / route_count);
+      history.routing_disagreement_rate.push_back(
+          static_cast<double>(routing_disagreements) / route_count);
+    }
   }
   return history;
 }

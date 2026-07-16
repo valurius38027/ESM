@@ -205,3 +205,93 @@ SGW_TEST(phase5_conditions_preserve_topology_and_bound_without_parameters) {
   SGW_REQUIRE(sgw::estimated_step_madds(linear) ==
               sgw::estimated_step_madds(bounded));
 }
+
+SGW_TEST(phase6_conditions_map_to_exact_and_learned_key_value_presets) {
+  using sgw::ExperimentCondition;
+  SGW_REQUIRE(sgw::parse_experiment_condition("structural_kv_exact") ==
+              ExperimentCondition::structural_kv_exact);
+  SGW_REQUIRE(sgw::parse_experiment_condition("structural_kv_learned") ==
+              ExperimentCondition::structural_kv_learned);
+  SGW_REQUIRE(sgw::model_preset_for_condition(
+                  ExperimentCondition::structural_kv_exact) ==
+              sgw::ModelPreset::structural_kv_exact);
+  SGW_REQUIRE(sgw::model_preset_for_condition(
+                  ExperimentCondition::structural_kv_learned) ==
+              sgw::ModelPreset::structural_kv_learned);
+  SGW_REQUIRE(sgw::experiment_condition_name(
+                  ExperimentCondition::structural_kv_learned) ==
+              std::string_view("structural_kv_learned"));
+}
+
+SGW_TEST(phase6_presets_fix_slot_identity_and_parameter_budget) {
+  const auto exact = sgw::make_model_config(
+      sgw::ModelPreset::structural_kv_exact, 13, 5);
+  const auto learned = sgw::make_model_config(
+      sgw::ModelPreset::structural_kv_learned, 13, 5);
+  sgw::SgwEsmModel exact_model(exact, 9);
+  sgw::SgwEsmModel learned_model(learned, 9);
+
+  SGW_REQUIRE(exact.key_value_mode ==
+              sgw::KeyValueMediationMode::symbolic_exact);
+  SGW_REQUIRE(learned.key_value_mode ==
+              sgw::KeyValueMediationMode::learned_tied);
+  SGW_REQUIRE(exact.workspace_slots == 3);
+  SGW_REQUIRE(learned.workspace_slots == 3);
+  SGW_REQUIRE(learned.key_dim == 8);
+  SGW_REQUIRE(learned.value_dim == 8);
+  SGW_REQUIRE(learned.workspace_dim == 16);
+  SGW_REQUIRE_NEAR(learned.key_value_logit_scale, 6.0, 0.0);
+  SGW_REQUIRE(exact_model.parameters().scalar_count() == 0);
+  SGW_REQUIRE(learned_model.parameters().scalar_count() == 88);
+  SGW_REQUIRE(has_parameter(learned_model, "kv_entity_codebook"));
+  SGW_REQUIRE(has_parameter(learned_model, "kv_value_codebook"));
+}
+
+SGW_TEST(phase7_conditions_map_to_position_independent_write_presets) {
+  using sgw::ExperimentCondition;
+  SGW_REQUIRE(sgw::parse_experiment_condition("kv_fixed_position") ==
+              ExperimentCondition::kv_fixed_position);
+  SGW_REQUIRE(sgw::parse_experiment_condition("kv_first_free") ==
+              ExperimentCondition::kv_first_free);
+  SGW_REQUIRE(sgw::parse_experiment_condition("kv_hard_router") ==
+              ExperimentCondition::kv_hard_router);
+  SGW_REQUIRE(sgw::parse_experiment_condition("kv_annealed_router") ==
+              ExperimentCondition::kv_annealed_router);
+  SGW_REQUIRE(sgw::model_preset_for_condition(
+                  ExperimentCondition::kv_annealed_router) ==
+              sgw::ModelPreset::kv_annealed_router);
+  SGW_REQUIRE(sgw::experiment_condition_name(
+                  ExperimentCondition::kv_first_free) ==
+              std::string_view("kv_first_free"));
+}
+
+SGW_TEST(phase7_router_presets_have_exact_parameter_budgets) {
+  const auto fixed = sgw::make_model_config(
+      sgw::ModelPreset::kv_fixed_position, 13, 5);
+  const auto first_free = sgw::make_model_config(
+      sgw::ModelPreset::kv_first_free, 13, 5);
+  const auto hard = sgw::make_model_config(
+      sgw::ModelPreset::kv_hard_router, 13, 5);
+  const auto annealed = sgw::make_model_config(
+      sgw::ModelPreset::kv_annealed_router, 13, 5);
+  sgw::SgwEsmModel fixed_model(fixed, 17);
+  sgw::SgwEsmModel first_free_model(first_free, 17);
+  sgw::SgwEsmModel hard_model(hard, 17);
+  sgw::SgwEsmModel annealed_model(annealed, 17);
+
+  SGW_REQUIRE(fixed.key_value_write_routing ==
+              sgw::KeyValueWriteRoutingMode::fixed_position);
+  SGW_REQUIRE(first_free.key_value_write_routing ==
+              sgw::KeyValueWriteRoutingMode::first_free);
+  SGW_REQUIRE(hard.key_value_write_routing ==
+              sgw::KeyValueWriteRoutingMode::hard_learned);
+  SGW_REQUIRE(annealed.key_value_write_routing ==
+              sgw::KeyValueWriteRoutingMode::annealed_learned);
+  SGW_REQUIRE(fixed_model.parameters().scalar_count() == 88);
+  SGW_REQUIRE(first_free_model.parameters().scalar_count() == 88);
+  SGW_REQUIRE(hard_model.parameters().scalar_count() == 112);
+  SGW_REQUIRE(annealed_model.parameters().scalar_count() == 112);
+  SGW_REQUIRE_NEAR(annealed.key_value_router_initial_temperature, 2.0, 0.0);
+  SGW_REQUIRE_NEAR(annealed.key_value_router_final_temperature, 0.1, 0.0);
+  SGW_REQUIRE(annealed.key_value_router_anneal_steps == 600);
+}
