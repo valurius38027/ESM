@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <functional>
 #include <numeric>
 #include <random>
 #include <stdexcept>
@@ -37,7 +38,13 @@ void deterministic_shuffle(std::vector<std::size_t>& values,
   }
 }
 
-std::pair<double, std::size_t> numeric_loss_and_prediction(
+struct NumericPrediction {
+  double nll{0.0};
+  std::size_t prediction{0};
+  std::vector<double> probabilities;
+};
+
+NumericPrediction numeric_prediction(
     std::span<const ad::Var> logits, std::size_t target_class) {
   if (logits.empty() || target_class >= logits.size()) {
     throw std::invalid_argument("invalid logits or target class");
@@ -51,15 +58,18 @@ std::pair<double, std::size_t> numeric_loss_and_prediction(
       prediction = index;
     }
   }
+  std::vector<double> probabilities(logits.size(), 0.0);
   double exp_sum = 0.0;
-  for (const ad::Var logit : logits) {
-    exp_sum += std::exp(logit.value() - maximum);
+  for (std::size_t index = 0; index < logits.size(); ++index) {
+    probabilities[index] = std::exp(logits[index].value() - maximum);
+    exp_sum += probabilities[index];
   }
-  const double nll = std::log(exp_sum) + maximum - logits[target_class].value();
+  for (double& probability : probabilities) probability /= exp_sum;
+  const double nll = -std::log(probabilities[target_class]);
   if (!std::isfinite(nll)) {
     throw std::runtime_error("evaluation produced non-finite NLL");
   }
-  return {nll, prediction};
+  return NumericPrediction{nll, prediction, std::move(probabilities)};
 }
 
 }  // namespace
@@ -141,7 +151,14 @@ EvaluationMetrics evaluate(SgwEsmModel& model,
   metrics.role_mechanism_load.assign(
       role_count * model.config().mechanism_count, 0);
   double total_nll = 0.0;
+  double total_brier = 0.0;
+  double total_max_confidence = 0.0;
+  double total_true_probability = 0.0;
   std::size_t correct = 0;
+  constexpr std::size_t calibration_bins = 10;
+  std::vector<std::size_t> bin_counts(calibration_bins, 0);
+  std::vector<double> bin_confidence(calibration_bins, 0.0);
+  std::vector<std::size_t> bin_correct(calibration_bins, 0);
   long double total_madds = 0.0L;
   std::size_t total_tokens = 0;
   std::size_t total_active = 0;
@@ -152,12 +169,29 @@ EvaluationMetrics evaluate(SgwEsmModel& model,
     ad::Tape tape;
     const SequenceResult result =
         model.forward_sequence(tape, sample.tokens, collect_routes, intervention);
-    const auto [nll, prediction] =
-        numeric_loss_and_prediction(result.logits, sample.target_class);
-    total_nll += nll;
-    if (prediction == sample.target_class) {
-      ++correct;
+    const NumericPrediction prediction =
+        numeric_prediction(result.logits, sample.target_class);
+    total_nll += prediction.nll;
+    const bool is_correct = prediction.prediction == sample.target_class;
+    if (is_correct) ++correct;
+    double brier = 0.0;
+    for (std::size_t index = 0; index < prediction.probabilities.size(); ++index) {
+      const double expected = index == sample.target_class ? 1.0 : 0.0;
+      const double error = prediction.probabilities[index] - expected;
+      brier += error * error;
     }
+    total_brier += brier;
+    const double confidence = *std::max_element(
+        prediction.probabilities.begin(), prediction.probabilities.end());
+    total_max_confidence += confidence;
+    total_true_probability += prediction.probabilities[sample.target_class];
+    const std::size_t bin = std::min(
+        calibration_bins - 1,
+        static_cast<std::size_t>(confidence *
+                                 static_cast<double>(calibration_bins)));
+    ++bin_counts[bin];
+    bin_confidence[bin] += confidence;
+    if (is_correct) ++bin_correct[bin];
     total_tokens += sample.tokens.size();
     total_madds += static_cast<long double>(
         estimated_step_madds(model.config()) * sample.tokens.size());
@@ -186,8 +220,19 @@ EvaluationMetrics evaluate(SgwEsmModel& model,
   }
 
   metrics.mean_nll = total_nll / static_cast<double>(samples.size());
-  metrics.accuracy =
-      static_cast<double>(correct) / static_cast<double>(samples.size());
+  const double sample_count = static_cast<double>(samples.size());
+  metrics.accuracy = static_cast<double>(correct) / sample_count;
+  metrics.mean_brier = total_brier / sample_count;
+  metrics.mean_max_confidence = total_max_confidence / sample_count;
+  metrics.mean_true_class_probability = total_true_probability / sample_count;
+  for (std::size_t bin = 0; bin < calibration_bins; ++bin) {
+    if (bin_counts[bin] == 0) continue;
+    const double count = static_cast<double>(bin_counts[bin]);
+    const double mean_confidence = bin_confidence[bin] / count;
+    const double mean_accuracy = static_cast<double>(bin_correct[bin]) / count;
+    metrics.ece += (count / sample_count) *
+                   std::abs(mean_accuracy - mean_confidence);
+  }
   metrics.mean_estimated_madds_per_token =
       static_cast<double>(total_madds / static_cast<long double>(total_tokens));
   if (collect_routes) {
@@ -202,13 +247,13 @@ EvaluationMetrics evaluate(SgwEsmModel& model,
   return metrics;
 }
 
-TrainingHistory train_steps(SgwEsmModel& model,
-                            std::span<const BindingSample> samples,
-                            const AdamConfig& adam_config,
-                            const TrainingConfig& training_config) {
-  if (samples.empty()) {
-    throw std::invalid_argument("training samples must not be empty");
-  }
+namespace {
+
+TrainingHistory train_with_provider(
+    SgwEsmModel& model,
+    const AdamConfig& adam_config,
+    const TrainingConfig& training_config,
+    const std::function<BindingSample()>& next_sample) {
   adam_config.validate();
   training_config.validate();
   Adam optimizer(adam_config);
@@ -220,12 +265,6 @@ TrainingHistory train_steps(SgwEsmModel& model,
   history.gradient_norm.reserve(training_config.steps);
   history.clip_scale.reserve(training_config.steps);
 
-  std::vector<std::size_t> order(samples.size());
-  std::iota(order.begin(), order.end(), std::size_t{0});
-  std::mt19937_64 generator(training_config.shuffle_seed);
-  deterministic_shuffle(order, generator);
-  std::size_t cursor = 0;
-
   for (std::size_t step = 0; step < training_config.steps; ++step) {
     model.parameters().zero_grad();
     const double auxiliary_weight =
@@ -235,11 +274,8 @@ TrainingHistory train_steps(SgwEsmModel& model,
     double auxiliary_loss_sum = 0.0;
     for (std::size_t batch_index = 0;
          batch_index < training_config.batch_size; ++batch_index) {
-      if (cursor == order.size()) {
-        deterministic_shuffle(order, generator);
-        cursor = 0;
-      }
-      const BindingSample& sample = samples[order[cursor++]];
+      const BindingSample sample = next_sample();
+      ++history.samples_consumed;
       ad::Tape tape;
       const SequenceResult result =
           model.forward_sequence(tape, sample.tokens, false);
@@ -276,12 +312,50 @@ TrainingHistory train_steps(SgwEsmModel& model,
     optimizer.step(model.parameters());
     history.batch_loss.push_back(loss_sum * inverse_batch);
     history.primary_batch_loss.push_back(primary_loss_sum * inverse_batch);
-    history.workspace_aux_batch_loss.push_back(auxiliary_loss_sum * inverse_batch);
+    history.workspace_aux_batch_loss.push_back(
+        auxiliary_loss_sum * inverse_batch);
     history.workspace_aux_weight.push_back(auxiliary_weight);
     history.gradient_norm.push_back(gradient_norm);
     history.clip_scale.push_back(optimizer.last_clip_scale());
   }
   return history;
+}
+
+}  // namespace
+
+TrainingHistory train_steps(SgwEsmModel& model,
+                            std::span<const BindingSample> samples,
+                            const AdamConfig& adam_config,
+                            const TrainingConfig& training_config) {
+  if (samples.empty()) {
+    throw std::invalid_argument("training samples must not be empty");
+  }
+  std::vector<std::size_t> order(samples.size());
+  std::iota(order.begin(), order.end(), std::size_t{0});
+  std::mt19937_64 generator(training_config.shuffle_seed);
+  deterministic_shuffle(order, generator);
+  std::size_t cursor = 0;
+  const auto next_sample = [&]() {
+    if (cursor == order.size()) {
+      deterministic_shuffle(order, generator);
+      cursor = 0;
+    }
+    return samples[order[cursor++]];
+  };
+  return train_with_provider(model, adam_config, training_config, next_sample);
+}
+
+TrainingHistory train_steps(SgwEsmModel& model,
+                            StructuralBindingStream& stream,
+                            const AdamConfig& adam_config,
+                            const TrainingConfig& training_config) {
+  const std::size_t requested = training_config.steps * training_config.batch_size;
+  if (requested > stream.remaining()) {
+    throw std::invalid_argument(
+        "structural training stream does not contain enough unique samples");
+  }
+  const auto next_sample = [&]() { return stream.next(); };
+  return train_with_provider(model, adam_config, training_config, next_sample);
 }
 
 }  // namespace sgw

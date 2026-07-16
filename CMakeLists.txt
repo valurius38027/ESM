@@ -75,3 +75,9 @@ add_test(
   COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/test_phase4_summary.py
           ${CMAKE_SOURCE_DIR}
 )
+
+add_test(
+  NAME sgw_phase5_summary
+  COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/test_phase5_summary.py
+          ${CMAKE_SOURCE_DIR}
+)

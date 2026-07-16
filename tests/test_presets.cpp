@@ -180,3 +180,28 @@ SGW_TEST(phase4_presets_remove_content_bypass_and_learned_address_parameters) {
   SGW_REQUIRE(!has_parameter(mediation_model, "slot_key"));
   SGW_REQUIRE(!has_parameter(mediation_model, "recipient_key"));
 }
+
+SGW_TEST(phase5_conditions_preserve_topology_and_bound_without_parameters) {
+  using sgw::ExperimentCondition;
+  SGW_REQUIRE(sgw::parse_experiment_condition("structural_core_full") ==
+              ExperimentCondition::structural_core_full);
+  SGW_REQUIRE(sgw::parse_experiment_condition("structural_core_blind") ==
+              ExperimentCondition::structural_core_blind);
+  SGW_REQUIRE(sgw::parse_experiment_condition("structural_mediation_linear") ==
+              ExperimentCondition::structural_mediation_linear);
+  SGW_REQUIRE(sgw::parse_experiment_condition("structural_mediation_bounded") ==
+              ExperimentCondition::structural_mediation_bounded);
+
+  const auto linear = sgw::make_model_config(
+      sgw::ModelPreset::structural_mediation_linear, 13, 5);
+  const auto bounded = sgw::make_model_config(
+      sgw::ModelPreset::structural_mediation_bounded, 13, 5);
+  sgw::SgwEsmModel linear_model(linear, 3);
+  sgw::SgwEsmModel bounded_model(bounded, 3);
+  SGW_REQUIRE_NEAR(linear.output_logit_bound, 0.0, 0.0);
+  SGW_REQUIRE_NEAR(bounded.output_logit_bound, 1.0, 0.0);
+  SGW_REQUIRE(linear_model.parameters().scalar_count() ==
+              bounded_model.parameters().scalar_count());
+  SGW_REQUIRE(sgw::estimated_step_madds(linear) ==
+              sgw::estimated_step_madds(bounded));
+}

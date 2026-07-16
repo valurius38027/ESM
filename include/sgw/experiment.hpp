@@ -25,6 +25,10 @@ struct TrainingConfig {
 struct EvaluationMetrics {
   double mean_nll{0.0};
   double accuracy{0.0};
+  double mean_brier{0.0};
+  double ece{0.0};
+  double mean_max_confidence{0.0};
+  double mean_true_class_probability{0.0};
   double mean_estimated_madds_per_token{0.0};
   double mean_active_mechanisms_per_token{0.0};
   double mean_writers_per_token{0.0};
@@ -40,6 +44,7 @@ struct TrainingHistory {
   std::vector<double> workspace_aux_weight;
   std::vector<double> gradient_norm;
   std::vector<double> clip_scale;
+  std::size_t samples_consumed{0};
 };
 
 [[nodiscard]] double workspace_aux_weight_at_step(
@@ -64,6 +69,12 @@ struct TrainingHistory {
 [[nodiscard]] TrainingHistory train_steps(
     SgwEsmModel& model,
     std::span<const BindingSample> samples,
+    const AdamConfig& adam_config,
+    const TrainingConfig& training_config);
+
+[[nodiscard]] TrainingHistory train_steps(
+    SgwEsmModel& model,
+    StructuralBindingStream& stream,
     const AdamConfig& adam_config,
     const TrainingConfig& training_config);
 

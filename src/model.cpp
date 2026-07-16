@@ -674,6 +674,10 @@ SequenceResult SgwEsmModel::forward_sequence(
                                   state.active_summary);
       }
     }
+    if (config_.output_logit_bound > 0.0) {
+      const ad::Var bound = tape.constant(config_.output_logit_bound);
+      logit = bound * ad::tanh(logit / bound);
+    }
     logits.push_back(logit);
   }
 

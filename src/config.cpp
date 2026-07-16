@@ -34,6 +34,10 @@ void ModelConfig::validate() const {
   require_positive(active_mechanisms, "active_mechanisms");
   require_positive(workspace_writers, "workspace_writers");
   require_positive(broadcast_recipients, "broadcast_recipients");
+  if (!std::isfinite(output_logit_bound) || output_logit_bound < 0.0) {
+    throw std::invalid_argument(
+        "output_logit_bound must be finite and non-negative");
+  }
 
   if (output_classes > vocab_size) {
     throw std::invalid_argument("output_classes must not exceed vocab_size");
