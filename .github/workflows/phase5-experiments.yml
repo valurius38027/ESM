@@ -1,8 +1,6 @@
 name: Phase 5 Structural Calibration Experiments
 
 on:
-  pull_request:
-    branches: [agent/phase4-mediation]
   workflow_dispatch:
     inputs:
       steps:
@@ -19,7 +17,6 @@ permissions:
 
 jobs:
   shard:
-    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'agent/phase5-calibration'
     name: Seeds ${{ matrix.shard }}
     runs-on: ubuntu-24.04
     timeout-minutes: 240
@@ -57,7 +54,6 @@ jobs:
           retention-days: 30
 
   aggregate:
-    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'agent/phase5-calibration'
     name: Aggregate formal results
     needs: shard
     runs-on: ubuntu-24.04
