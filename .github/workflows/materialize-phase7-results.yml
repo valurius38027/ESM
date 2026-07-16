@@ -1,0 +1,69 @@
+name: Materialize Phase 7 Results
+
+on:
+  pull_request:
+    branches: [agent/phase5-calibration]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: materialize-phase7-results-${{ github.event.pull_request.head.ref }}
+  cancel-in-progress: false
+
+jobs:
+  materialize:
+    if: github.head_ref == 'agent/phase7-learned-slot-routing'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/phase7-learned-slot-routing
+          fetch-depth: 0
+      - name: Download and verify formal artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          curl --fail --location \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            https://api.github.com/repos/valurius38027/ESM/actions/artifacts/8388365834/zip \
+            --output /tmp/phase7-results.zip
+          echo 'c61cd820d4d023e0e9f223fe15dcde0d25ae19ae18901943b6a939acd040e342  /tmp/phase7-results.zip' | sha256sum --check
+          rm -rf /tmp/phase7-results
+          mkdir -p /tmp/phase7-results
+          unzip -q /tmp/phase7-results.zip -d /tmp/phase7-results
+          cd /tmp/phase7-results/phase7-formal
+          sha256sum --check SHA256SUMS
+          expected=(
+            SHA256SUMS
+            phase7_runs.csv
+            phase7_causal.csv
+            phase7_summary.csv
+            phase7_paired.csv
+            phase7_causal_comparisons.csv
+            phase7_routing.csv
+            phase7_manifest.json
+          )
+          for file in "${expected[@]}"; do test -f "$file"; done
+          test "$(find . -maxdepth 1 -type f | wc -l)" -eq 8
+      - name: Commit verified consolidated results
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf results/phase7-formal
+          mkdir -p results
+          cp -a /tmp/phase7-results/phase7-formal results/phase7-formal
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -f results/phase7-formal
+          if git diff --cached --quiet; then
+            echo 'No formal result changes to commit.' >&2
+            exit 1
+          fi
+          git commit -m 'results: record Phase 7 formal experiment'
+          git push origin HEAD:agent/phase7-learned-slot-routing
