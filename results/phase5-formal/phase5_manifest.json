@@ -1,0 +1,26 @@
+{
+  "analysis_seed": 20260716,
+  "bootstrap_replicates": 50000,
+  "causal_rows": 300,
+  "conditions": [
+    "structural_core_full",
+    "structural_core_blind",
+    "structural_mediation_linear",
+    "structural_mediation_bounded"
+  ],
+  "interventions": [
+    "intact",
+    "no_broadcast",
+    "no_workspace_persistence",
+    "no_workspace_output",
+    "no_spine_workspace",
+    "no_mechanism_output",
+    "workspace_disconnected",
+    "no_workspace_writes",
+    "zero_reader_inbox",
+    "permuted_recipients"
+  ],
+  "run_rows": 120,
+  "seed_count": 30,
+  "seed_start": 0
+}
