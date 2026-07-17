@@ -1,0 +1,51 @@
+name: Export Phase 8 Handoff
+
+on:
+  pull_request:
+    branches: [agent/phase8-retention-eviction]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'agent/export-phase8-handoff-20260717'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/phase8-retention-eviction
+          fetch-depth: 0
+      - name: Fetch all refs
+        run: git fetch --all --tags --prune
+      - name: Build verified handoff artifacts
+        run: |
+          mkdir -p handoff-export
+          git bundle create handoff-export/ESM_phase8_handoff.git.bundle --all
+          git bundle verify handoff-export/ESM_phase8_handoff.git.bundle
+          git archive --format=zip \
+            --prefix=ESM_phase8_handoff/ \
+            --output=handoff-export/ESM_phase8_handoff_source.zip \
+            agent/phase8-retention-eviction
+          git show -s --format='%H%n%P%n%s%n%ci' \
+            agent/phase8-retention-eviction \
+            > handoff-export/HEAD.txt
+          git show-ref > handoff-export/REFS.txt
+          cp docs/HANDOFF_2026-07-17_PHASE8.md handoff-export/
+          cp docs/superpowers/plans/2026-07-17-sgw-esm-phase9-delayed-utility-stability.md \
+            handoff-export/
+          (cd handoff-export && sha256sum \
+            ESM_phase8_handoff.git.bundle \
+            ESM_phase8_handoff_source.zip \
+            HANDOFF_2026-07-17_PHASE8.md \
+            2026-07-17-sgw-esm-phase9-delayed-utility-stability.md \
+            HEAD.txt REFS.txt > SHA256SUMS)
+      - name: Upload handoff package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ESM-phase8-handoff
+          path: handoff-export/
+          if-no-files-found: error
+          retention-days: 90
