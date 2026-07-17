@@ -1,0 +1,124 @@
+{
+  "annealed_seed_distribution": {
+    "acc_max": 1.0,
+    "acc_median": 0.996875,
+    "acc_min": 0.7375,
+    "hit_max": 1.0,
+    "hit_min": 0.66875,
+    "n_ge_90": 23,
+    "n_ge_95": 21,
+    "n_ge_99": 16,
+    "nll_max": 1.10056110954,
+    "nll_min": 0.003956094741,
+    "relev_evict_max": 0.095833333333,
+    "relev_evict_min": 0.0,
+    "tail_hit_max": 1.0,
+    "tail_hit_min": 0.72125,
+    "tail_relev_evict_max": 0.098125,
+    "tail_relev_evict_min": 0.0
+  },
+  "artifact_id": 8398546609,
+  "artifact_zip_sha256": "3bb581b4b104f29e836d4cdbce0cb519727466c8df17e408c3595e1e5744300c",
+  "causal_rows": 300,
+  "correlations": {
+    "hard_tail_query_hit_vs_accuracy": 0.9773913033339019,
+    "hard_tail_relevant_eviction_vs_accuracy": -0.9642117724433295,
+    "query_read_hit_vs_accuracy": 0.9964476791265511,
+    "relevant_eviction_vs_accuracy": -0.9782112988685251
+  },
+  "formal_reaggregation_byte_identical": {
+    "SHA256SUMS": true,
+    "phase8_causal.csv": true,
+    "phase8_causal_comparisons.csv": true,
+    "phase8_manifest.json": true,
+    "phase8_paired.csv": true,
+    "phase8_retention.csv": true,
+    "phase8_runs.csv": true,
+    "phase8_summary.csv": true
+  },
+  "independent_bootstrap": {
+    "comparisons": {
+      "annealed_vs_fifo_eviction/final_holdout_accuracy": {
+        "ci_high": 0.39291666666666664,
+        "ci_low": 0.3225,
+        "favorable_count": 30,
+        "mean_improvement": 0.35937500000000006
+      },
+      "annealed_vs_fifo_eviction/final_holdout_brier": {
+        "ci_high": 0.5795018049895434,
+        "ci_low": 0.46935651980050835,
+        "favorable_count": 30,
+        "mean_improvement": 0.5274580298371
+      },
+      "annealed_vs_fifo_eviction/final_holdout_ece": {
+        "ci_high": 0.05874663920692999,
+        "ci_low": 0.033273131608464165,
+        "favorable_count": 26,
+        "mean_improvement": 0.046117753181000004
+      },
+      "annealed_vs_fifo_eviction/final_holdout_nll": {
+        "ci_high": 1.2169801449313389,
+        "ci_low": 0.946654067446325,
+        "favorable_count": 30,
+        "mean_improvement": 1.0878098543067665
+      },
+      "annealed_vs_hard_retention/final_holdout_accuracy": {
+        "ci_high": 0.39333333333333337,
+        "ci_low": 0.3147916666666667,
+        "favorable_count": 30,
+        "mean_improvement": 0.35458333333333336
+      },
+      "annealed_vs_hard_retention/final_holdout_brier": {
+        "ci_high": 0.5737927861629257,
+        "ci_low": 0.46479226719385414,
+        "favorable_count": 30,
+        "mean_improvement": 0.5208198070958333
+      },
+      "annealed_vs_hard_retention/final_holdout_ece": {
+        "ci_high": 0.071938650574845,
+        "ci_low": 0.041326662578506666,
+        "favorable_count": 30,
+        "mean_improvement": 0.05600307160893334
+      },
+      "annealed_vs_hard_retention/final_holdout_nll": {
+        "ci_high": 1.2223730420645014,
+        "ci_low": 0.9634267647349883,
+        "favorable_count": 30,
+        "mean_improvement": 1.0969602132388663
+      },
+      "annealed_vs_reservoir/final_holdout_accuracy": {
+        "ci_high": 0.3772916666666667,
+        "ci_low": 0.3154166666666667,
+        "favorable_count": 30,
+        "mean_improvement": 0.34770833333333334
+      },
+      "annealed_vs_reservoir/final_holdout_brier": {
+        "ci_high": 0.564322945967295,
+        "ci_low": 0.46256880554980345,
+        "favorable_count": 30,
+        "mean_improvement": 0.5158905557379
+      },
+      "annealed_vs_reservoir/final_holdout_ece": {
+        "ci_high": 0.056085679332504156,
+        "ci_low": 0.03512677501731583,
+        "favorable_count": 30,
+        "mean_improvement": 0.04520649667163333
+      },
+      "annealed_vs_reservoir/final_holdout_nll": {
+        "ci_high": 1.1895835775432717,
+        "ci_low": 0.9347763616655574,
+        "favorable_count": 30,
+        "mean_improvement": 1.0671127643929335
+      }
+    },
+    "replicates": 200000,
+    "rng": "numpy.default_rng",
+    "seed": 9172601
+  },
+  "raw_causal_files": 30,
+  "raw_primary_files": 180,
+  "raw_vs_consolidated_exact": true,
+  "run_rows": 180,
+  "source_head_sha": "0daf86d4717fd2f800aef1b58443efb228cbf51b",
+  "workflow_run_id": 29559003157
+}
