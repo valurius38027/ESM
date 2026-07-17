@@ -47,6 +47,11 @@ struct EvaluationMetrics {
   double queried_entity_retention_rate{0.0};
   double query_read_hit_rate{0.0};
   double mean_retained_age{0.0};
+  double mean_source_query_distance{0.0};
+  double mean_delay_binding_count{0.0};
+  double distractor_write_rate{0.0};
+  double distractor_eviction_rate{0.0};
+  double relevant_survival_rate{0.0};
   std::vector<std::size_t> eviction_slot_load;
 };
 
@@ -66,8 +71,17 @@ struct TrainingHistory {
   std::vector<double> relevant_eviction_rate;
   std::vector<double> queried_entity_retention_rate;
   std::vector<double> query_read_hit_rate;
+  std::vector<double> mean_delay_binding_count;
+  std::vector<double> mean_source_query_distance;
+  std::vector<double> distractor_write_rate;
+  std::vector<double> distractor_eviction_rate;
+  std::vector<double> relevant_survival_rate;
   std::size_t samples_consumed{0};
 };
+
+[[nodiscard]] std::size_t phase9_curriculum_delay(
+    std::size_t step,
+    std::size_t total_steps);
 
 [[nodiscard]] double workspace_aux_weight_at_step(
     const TrainingConfig& config,

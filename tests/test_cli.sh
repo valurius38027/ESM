@@ -26,14 +26,14 @@ timeout 110s "$exe" "${common[@]}" --output "$second" \
 cmp "$first" "$second"
 cmp "$causal_first" "$causal_second"
 
-header='preset,seed,steps,batch_size,parameters,train_count,holdout_count,sequence_length,chance_nll,initial_train_nll,initial_holdout_nll,final_train_nll,final_holdout_nll,final_train_accuracy,final_holdout_accuracy,mean_estimated_madds_per_token,mean_active_mechanisms_per_token,mean_writers_per_token,mean_recipients_per_token,first_window_loss,last_window_loss,mechanism_load,role_mechanism_load,condition,workspace_aux_initial_weight,workspace_aux_anneal_steps,first_primary_window_loss,last_primary_window_loss,last_workspace_aux_window_loss,anneal_boundary_primary_window_loss,final_workspace_aux_weight,final_weighted_workspace_aux_window_loss,training_stream_samples,output_logit_bound,initial_train_brier,initial_holdout_brier,final_train_brier,final_holdout_brier,initial_train_ece,initial_holdout_ece,final_train_ece,final_holdout_ece,final_train_max_confidence,final_holdout_max_confidence,final_train_true_class_probability,final_holdout_true_class_probability,read_slot_load,write_slot_load,mean_write_collision_rate,mean_routing_entropy,mean_routing_disagreement_rate,router_initial_temperature,router_final_temperature,router_anneal_steps,final_200_collision_rate,final_200_routing_entropy,final_200_disagreement_rate,retention_write_rate,retention_skip_rate,retention_eviction_rate,relevant_eviction_rate,queried_entity_retention_rate,query_read_hit_rate,mean_retained_age,eviction_slot_load,final_300_retention_write_rate,final_300_retention_skip_rate,final_300_retention_eviction_rate,final_300_relevant_eviction_rate,final_300_query_read_hit_rate'
+header='preset,seed,steps,batch_size,parameters,train_count,holdout_count,sequence_length,chance_nll,initial_train_nll,initial_holdout_nll,final_train_nll,final_holdout_nll,final_train_accuracy,final_holdout_accuracy,mean_estimated_madds_per_token,mean_active_mechanisms_per_token,mean_writers_per_token,mean_recipients_per_token,first_window_loss,last_window_loss,mechanism_load,role_mechanism_load,condition,workspace_aux_initial_weight,workspace_aux_anneal_steps,first_primary_window_loss,last_primary_window_loss,last_workspace_aux_window_loss,anneal_boundary_primary_window_loss,final_workspace_aux_weight,final_weighted_workspace_aux_window_loss,training_stream_samples,output_logit_bound,initial_train_brier,initial_holdout_brier,final_train_brier,final_holdout_brier,initial_train_ece,initial_holdout_ece,final_train_ece,final_holdout_ece,final_train_max_confidence,final_holdout_max_confidence,final_train_true_class_probability,final_holdout_true_class_probability,read_slot_load,write_slot_load,mean_write_collision_rate,mean_routing_entropy,mean_routing_disagreement_rate,router_initial_temperature,router_final_temperature,router_anneal_steps,final_200_collision_rate,final_200_routing_entropy,final_200_disagreement_rate,retention_write_rate,retention_skip_rate,retention_eviction_rate,relevant_eviction_rate,queried_entity_retention_rate,query_read_hit_rate,mean_retained_age,eviction_slot_load,final_300_retention_write_rate,final_300_retention_skip_rate,final_300_retention_eviction_rate,final_300_relevant_eviction_rate,final_300_query_read_hit_rate,mean_source_query_distance,delay_binding_count,distractor_write_rate,distractor_eviction_rate,relevant_survival_rate,final_450_distractor_write_rate,final_450_distractor_eviction_rate,final_450_relevant_survival_rate,final_450_disagreement_rate,delay0_nll,delay0_accuracy,delay0_query_hit,delay0_survival,delay6_nll,delay6_accuracy,delay6_query_hit,delay6_survival,delay12_nll,delay12_accuracy,delay12_query_hit,delay12_survival,delay18_nll,delay18_accuracy,delay18_query_hit,delay18_survival,delay24_nll,delay24_accuracy,delay24_query_hit,delay24_survival'
 [[ $(head -n 1 "$first") == "$header" ]]
 [[ $(wc -l < "$first") -eq 2 ]]
 grep -q '^sgw,41,3,2,2182,' "$first"
 grep -q 'entity:' "$first"
 grep -q 'query_entity:' "$first"
 
-causal_header='seed,intervention,holdout_nll,holdout_accuracy,nll_delta_vs_intact,accuracy_delta_vs_intact,mean_active_mechanisms_per_token,mean_writers_per_token,mean_recipients_per_token,mechanism_load,role_mechanism_load,condition,holdout_brier,holdout_ece,holdout_max_confidence,holdout_true_class_probability,brier_delta_vs_intact,ece_delta_vs_intact,max_confidence_delta_vs_intact,true_class_probability_delta_vs_intact,read_slot_load,write_slot_load,mean_write_collision_rate,mean_routing_entropy,mean_routing_disagreement_rate,retention_write_rate,retention_skip_rate,retention_eviction_rate,relevant_eviction_rate,queried_entity_retention_rate,query_read_hit_rate,mean_retained_age,eviction_slot_load'
+causal_header='seed,intervention,holdout_nll,holdout_accuracy,nll_delta_vs_intact,accuracy_delta_vs_intact,mean_active_mechanisms_per_token,mean_writers_per_token,mean_recipients_per_token,mechanism_load,role_mechanism_load,condition,holdout_brier,holdout_ece,holdout_max_confidence,holdout_true_class_probability,brier_delta_vs_intact,ece_delta_vs_intact,max_confidence_delta_vs_intact,true_class_probability_delta_vs_intact,read_slot_load,write_slot_load,mean_write_collision_rate,mean_routing_entropy,mean_routing_disagreement_rate,retention_write_rate,retention_skip_rate,retention_eviction_rate,relevant_eviction_rate,queried_entity_retention_rate,query_read_hit_rate,mean_retained_age,eviction_slot_load,mean_source_query_distance,delay_binding_count,distractor_write_rate,distractor_eviction_rate,relevant_survival_rate'
 [[ $(head -n 1 "$causal_first") == "$causal_header" ]]
 [[ $(wc -l < "$causal_first") -eq 6 ]]
 for intervention in intact no_broadcast no_workspace_persistence no_workspace_output permuted_recipients; do
@@ -176,4 +176,24 @@ awk -F, 'NR==2 { exit !($8 == 15 && $33 == 8 && $61 >= 0 && $66 >= 0) }' "$phase
 [[ $(wc -l < "$phase8_causal") -eq 11 ]]
 for intervention in intact zero_query_context randomized_retention_actions force_fifo_retention force_relevant_eviction permuted_context_labels disable_retention_skip no_workspace_writes no_workspace_persistence no_mechanism_output; do
   grep -q "^43,$intervention," "$phase8_causal"
+done
+
+phase9="$out_dir/phase9-curriculum.csv"
+phase9_second="$out_dir/phase9-curriculum-second.csv"
+phase9_causal="$out_dir/phase9-curriculum-causal.csv"
+phase9_causal_second="$out_dir/phase9-curriculum-causal-second.csv"
+timeout 110s "$exe" --condition kv_delayed_annealed_curriculum --seed 47 \
+  --steps 4 --batch-size 2 --train-count 12 --holdout-count 6 \
+  --output "$phase9" --causal-output "$phase9_causal" >/dev/null
+timeout 110s "$exe" --condition kv_delayed_annealed_curriculum --seed 47 \
+  --steps 4 --batch-size 2 --train-count 12 --holdout-count 6 \
+  --output "$phase9_second" --causal-output "$phase9_causal_second" >/dev/null
+cmp "$phase9" "$phase9_second"
+cmp "$phase9_causal" "$phase9_causal_second"
+grep -q '^kv_delayed_annealed_curriculum,47,4,2,145,' "$phase9"
+grep -q ',kv_delayed_annealed_curriculum,' "$phase9"
+awk -F, 'NR==2 { exit !($8 == 51 && $33 == 8 && $71 > 0 && $72 == 18 && $85 != "" && $99 != "") }' "$phase9"
+[[ $(wc -l < "$phase9_causal") -eq 14 ]]
+for intervention in intact zero_query_context randomized_retention_actions force_fifo_retention force_relevant_eviction permuted_context_labels disable_retention_skip no_workspace_writes no_workspace_persistence no_mechanism_output remove_delay_distractors relevant_looking_delay_distractors reverse_delay_block; do
+  grep -q "^47,$intervention," "$phase9_causal"
 done

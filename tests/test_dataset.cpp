@@ -299,3 +299,51 @@ SGW_TEST(retention_training_stream_is_deterministic_and_nonrepeating) {
   SGW_REQUIRE(first.remaining() == 0);
   SGW_REQUIRE_THROWS(first.next());
 }
+
+SGW_TEST(delayed_retention_task_inserts_irrelevant_distractors_and_distance) {
+  sgw::RetentionTaskConfig task;
+  task.delay_binding_count = 18;
+  task.validate();
+  const auto dataset = sgw::make_retention_binding_split(task, 48, 24, 99123);
+  SGW_REQUIRE(task.total_binding_count() == 24);
+  SGW_REQUIRE(task.sequence_length() == 51);
+  const auto verify = [&](const sgw::BindingSample& sample) {
+    SGW_REQUIRE(sample.tokens.size() == task.sequence_length());
+    SGW_REQUIRE(sample.delay_binding_count == 18);
+    SGW_REQUIRE(sample.binding_relevance.size() == task.total_binding_count());
+    SGW_REQUIRE(sample.binding_is_delay_distractor.size() ==
+                task.total_binding_count());
+    SGW_REQUIRE(sample.source_query_distance ==
+                sample.query_entity_position - sample.source_value_position);
+    for (std::size_t binding = 0; binding < task.total_binding_count(); ++binding) {
+      const std::size_t position = 1 + 2 * binding;
+      const auto entity = static_cast<std::size_t>(sample.tokens[position]);
+      if (binding < task.binding_count) {
+        SGW_REQUIRE(!sample.binding_is_delay_distractor[binding]);
+      } else {
+        SGW_REQUIRE(sample.binding_is_delay_distractor[binding]);
+        SGW_REQUIRE(!sample.binding_relevance[binding]);
+        SGW_REQUIRE(!task.is_relevant(sample.context_class, entity));
+      }
+    }
+  };
+  for (const auto& sample : dataset.train) verify(sample);
+  for (const auto& sample : dataset.holdout) verify(sample);
+}
+
+SGW_TEST(delayed_retention_schedule_is_deterministic_unique_and_variable) {
+  sgw::RetentionTaskConfig task;
+  const std::vector<std::size_t> schedule{0, 0, 6, 6, 12, 12, 18, 18};
+  sgw::RetentionBindingStream first(task, 7721, schedule);
+  sgw::RetentionBindingStream second(task, 7721, schedule);
+  std::set<std::vector<int>> seen;
+  for (std::size_t index = 0; index < schedule.size(); ++index) {
+    const auto lhs = first.next();
+    const auto rhs = second.next();
+    SGW_REQUIRE(lhs.tokens == rhs.tokens);
+    SGW_REQUIRE(lhs.delay_binding_count == schedule[index]);
+    SGW_REQUIRE(lhs.tokens.size() == 15 + 2 * schedule[index]);
+    SGW_REQUIRE(seen.insert(lhs.tokens).second);
+  }
+  SGW_REQUIRE(first.remaining() == 0);
+}

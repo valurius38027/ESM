@@ -162,6 +162,12 @@ std::string_view forward_intervention_name(
       return "permuted_context_labels";
     case ForwardIntervention::disable_retention_skip:
       return "disable_retention_skip";
+    case ForwardIntervention::remove_delay_distractors:
+      return "remove_delay_distractors";
+    case ForwardIntervention::relevant_looking_delay_distractors:
+      return "relevant_looking_delay_distractors";
+    case ForwardIntervention::reverse_delay_block:
+      return "reverse_delay_block";
   }
   return "unknown";
 }
@@ -170,7 +176,12 @@ bool StepTrace::same_route(const StepTrace& other) const noexcept {
   return active_mechanisms == other.active_mechanisms &&
          writers == other.writers && writer_slots == other.writer_slots &&
          recipients == other.recipients &&
-         retention_actions == other.retention_actions;
+         retention_actions == other.retention_actions &&
+         distractor_writes == other.distractor_writes &&
+         distractor_evictions == other.distractor_evictions &&
+         delay_distractor_decisions == other.delay_distractor_decisions &&
+         relevant_survival_count == other.relevant_survival_count &&
+         relevant_survival_total == other.relevant_survival_total;
 }
 
 std::size_t estimated_step_madds(const ModelConfig& config) {
@@ -416,12 +427,13 @@ bool SgwEsmModel::key_value_router_uses_surrogate() const noexcept {
 SequenceResult SgwEsmModel::forward_retention_sequence(
     ad::Tape& tape, std::span<const int> tokens, bool capture_trace,
     ForwardIntervention intervention) {
-  const std::size_t bindings = config_.mediation_binding_count;
-  const std::size_t expected_length = 2 * bindings + 3;
-  if (tokens.size() != expected_length) {
+  const std::size_t candidate_bindings = config_.mediation_binding_count;
+  if (tokens.size() < 2 * candidate_bindings + 3 ||
+      (tokens.size() - 3) % 2 != 0) {
     throw std::invalid_argument(
-        "retention mediation requires context, six bindings, and query");
+        "retention mediation requires context, binding pairs, and query");
   }
+  const std::size_t bindings = (tokens.size() - 3) / 2;
   for (const int token : tokens) {
     if (token < 0 || static_cast<std::size_t>(token) >= config_.vocab_size) {
       throw std::out_of_range("input token out of vocabulary range");
@@ -432,7 +444,7 @@ SequenceResult SgwEsmModel::forward_retention_sequence(
   const std::size_t w = config_.workspace_dim;
   const std::size_t key_dim = config_.key_dim;
   const std::size_t value_dim = config_.value_dim;
-  const std::size_t reader = bindings;
+  const std::size_t reader = candidate_bindings;
   const std::size_t missing = config_.vocab_size;
   const std::size_t context_start = config_.vocab_size - config_.context_count;
   const std::size_t context_token = static_cast<std::size_t>(tokens.front());
@@ -545,7 +557,8 @@ SequenceResult SgwEsmModel::forward_retention_sequence(
   };
 
   const auto choose_action = [&](std::size_t binding,
-                                 std::size_t entity) {
+                                 std::size_t entity,
+                                 std::size_t policy_entity) {
     RetentionDecision decision;
     const std::size_t free_slot = first_free_slot();
     switch (config_.key_value_retention) {
@@ -583,7 +596,7 @@ SequenceResult SgwEsmModel::forward_retention_sequence(
             ? zero_vector(tape, key_dim)
             : normalize(parameter_row(*kv_context_codebook_, policy_context));
         const auto incoming = normalize(
-            parameter_row(*kv_entity_codebook_, entity));
+            parameter_row(*kv_entity_codebook_, policy_entity));
         const ad::Var incoming_relevance = dot(context_code, incoming);
         std::vector<ad::Var> scores;
         scores.reserve(b + 1);
@@ -683,13 +696,24 @@ SequenceResult SgwEsmModel::forward_retention_sequence(
       trace.estimated_madds = estimated_step_madds(config_);
     }
     const bool body = step >= 1 && step < 1 + 2 * bindings;
-    const std::size_t mechanism = body ? (step - 1) / 2 : reader;
+    const std::size_t binding = body ? (step - 1) / 2 : bindings;
+    const std::size_t mechanism = body
+        ? (reader == 0 ? 0 : binding % reader)
+        : reader;
     trace.active_mechanisms.push_back(mechanism);
     trace.recipients.push_back(reader);
 
     if (body) {
-      const std::size_t binding = (step - 1) / 2;
-      const std::size_t token = static_cast<std::size_t>(tokens[step]);
+      std::size_t source_binding = binding;
+      if (intervention == ForwardIntervention::reverse_delay_block &&
+          binding >= candidate_bindings) {
+        source_binding = candidate_bindings +
+            (bindings - 1 - binding);
+      }
+      const std::size_t source_step = 1 + 2 * source_binding +
+          ((step - 1) % 2);
+      const std::size_t token =
+          static_cast<std::size_t>(tokens[source_step]);
       if ((step - 1) % 2 == 0) {
         if (token >= config_.entity_count) {
           throw std::invalid_argument("retention entity token out of range");
@@ -697,7 +721,24 @@ SequenceResult SgwEsmModel::forward_retention_sequence(
         for (std::size_t slot = 0; slot < b; ++slot) {
           if (occupied[slot]) ++slot_ages[slot];
         }
-        RetentionDecision decision = choose_action(binding, token);
+        const bool delay_distractor = binding >= candidate_bindings;
+        trace.delay_distractor_decisions = delay_distractor ? 1 : 0;
+        std::size_t policy_entity = token;
+        if (delay_distractor && intervention ==
+                ForwardIntervention::relevant_looking_delay_distractors) {
+          policy_entity = (token / config_.context_count) *
+              config_.context_count + policy_context;
+          if (policy_entity >= config_.entity_count) {
+            policy_entity = policy_context;
+          }
+        }
+        RetentionDecision decision = choose_action(
+            binding, token, policy_entity);
+        if (delay_distractor && intervention ==
+                ForwardIntervention::remove_delay_distractors) {
+          decision.action = 0;
+          decision.gates = hard_action_gates(0);
+        }
         binding_actions[binding] = decision.action;
         binding_action_gates[binding] = std::move(decision.gates);
         trace.retention_actions.push_back(decision.action);
@@ -709,6 +750,7 @@ SequenceResult SgwEsmModel::forward_retention_sequence(
         } else {
           const std::size_t slot = decision.action - 1;
           trace.retention_writes = 1;
+          trace.distractor_writes = delay_distractor ? 1 : 0;
           trace.writers.push_back(mechanism);
           trace.writer_slots.push_back(slot);
           const bool incoming_relevant = relevant(token);
@@ -716,6 +758,7 @@ SequenceResult SgwEsmModel::forward_retention_sequence(
           trace.irrelevant_writes = incoming_relevant ? 0 : 1;
           if (occupied[slot]) {
             trace.retention_evictions = 1;
+            trace.distractor_evictions = delay_distractor ? 1 : 0;
             const bool evicted_relevant = relevant(slot_entities[slot]);
             trace.relevant_evictions = evicted_relevant ? 1 : 0;
             trace.irrelevant_evictions = evicted_relevant ? 0 : 1;
@@ -804,6 +847,12 @@ SequenceResult SgwEsmModel::forward_retention_sequence(
           slot_entities.end();
       trace.query_read_hit = trace.queried_entity_retained &&
           slot_entities[selected_slot] == query;
+      trace.relevant_survival_total = config_.workspace_slots;
+      for (std::size_t slot = 0; slot < b; ++slot) {
+        if (occupied[slot] && relevant(slot_entities[slot])) {
+          ++trace.relevant_survival_count;
+        }
+      }
       for (std::size_t slot = 0; slot < b; ++slot) {
         if (occupied[slot]) {
           trace.retained_age_sum += static_cast<double>(slot_ages[slot]);

@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string_view>
 #include <vector>
 
@@ -54,6 +55,9 @@ struct BindingSample {
   std::size_t query_entity_position{0};
   std::size_t context_class{0};
   std::vector<bool> binding_relevance;
+  std::vector<bool> binding_is_delay_distractor;
+  std::size_t delay_binding_count{0};
+  std::size_t source_query_distance{0};
 };
 
 struct BindingDataset {
@@ -70,8 +74,10 @@ struct RetentionTaskConfig {
   std::size_t binding_count{6};
   std::size_t relevant_binding_count{3};
   std::size_t workspace_slots{3};
+  std::size_t delay_binding_count{0};
 
   void validate() const;
+  [[nodiscard]] std::size_t total_binding_count() const;
   [[nodiscard]] std::size_t sequence_length() const;
   [[nodiscard]] bool is_relevant(std::size_t context,
                                  std::size_t entity) const;
@@ -90,6 +96,9 @@ class RetentionBindingStream {
   RetentionBindingStream(const RetentionTaskConfig& config,
                          std::uint64_t seed,
                          std::size_t sample_count);
+  RetentionBindingStream(const RetentionTaskConfig& config,
+                         std::uint64_t seed,
+                         std::span<const std::size_t> delay_schedule);
 
   [[nodiscard]] BindingSample next();
   [[nodiscard]] std::size_t samples_consumed() const noexcept;

@@ -1,0 +1,201 @@
+{
+  "analysis": "independent_phase9_verification",
+  "artifact_formal_files_byte_identical_to_repository_reaggregation": true,
+  "artifact_zip_sha256": "cc4670690b38396eefb32179d2548798d444d1de726bf51cd31b2c26ac831e59",
+  "bootstrap_replicates": 200000,
+  "curriculum_summary": {
+    "accuracy_ge_80_count": 6,
+    "accuracy_ge_90_count": 5,
+    "accuracy_ge_99_count": 5,
+    "corr_accuracy_distractor_write": -0.9597803186064134,
+    "corr_accuracy_hit": 0.992198315953515,
+    "corr_accuracy_relevant_eviction": -0.9127937426845424,
+    "corr_accuracy_survival": 0.9922289985482348,
+    "maximum_accuracy": 1.0,
+    "mean_accuracy": 0.7822916666666667,
+    "mean_distractor_write": 0.24671296296296663,
+    "mean_query_hit": 0.7260416666666666,
+    "mean_relevant_eviction": 0.028888888888800004,
+    "mean_survival": 0.7259722222222332,
+    "median_accuracy": 0.75,
+    "minimum_accuracy": 0.675
+  },
+  "formal_file_comparison": {
+    "SHA256SUMS": true,
+    "phase9_causal.csv": true,
+    "phase9_causal_comparisons.csv": true,
+    "phase9_delay_curves.csv": true,
+    "phase9_manifest.json": true,
+    "phase9_paired.csv": true,
+    "phase9_retention.csv": true,
+    "phase9_runs.csv": true,
+    "phase9_summary.csv": true
+  },
+  "independent_paired_bootstrap": {
+    "curriculum_vs_direct:final_holdout_accuracy": {
+      "ci_high": 0.17667187499999884,
+      "ci_low": 0.01916666666666667,
+      "favorable_count": 22,
+      "mean_improvement": 0.09625000000000002
+    },
+    "curriculum_vs_direct:final_holdout_brier": {
+      "ci_high": 0.18502963801538586,
+      "ci_low": -0.008336058244914978,
+      "favorable_count": 23,
+      "mean_improvement": 0.08981492591790001
+    },
+    "curriculum_vs_direct:final_holdout_nll": {
+      "ci_high": 0.4000547328030516,
+      "ci_low": -0.04583608344255083,
+      "favorable_count": 20,
+      "mean_improvement": 0.17950113612436666
+    },
+    "curriculum_vs_direct:query_read_hit_rate": {
+      "ci_high": 0.21625000000000003,
+      "ci_low": 0.018125000000000002,
+      "favorable_count": 16,
+      "mean_improvement": 0.11479166666666667
+    },
+    "curriculum_vs_direct:relevant_survival_rate": {
+      "ci_high": 0.21590277777780004,
+      "ci_low": 0.017708333333333333,
+      "favorable_count": 16,
+      "mean_improvement": 0.11430555555556668
+    },
+    "curriculum_vs_fifo:final_holdout_accuracy": {
+      "ci_high": 0.6189583333333332,
+      "ci_low": 0.5433333333333333,
+      "favorable_count": 30,
+      "mean_improvement": 0.5785416666666666
+    },
+    "curriculum_vs_fifo:final_holdout_brier": {
+      "ci_high": 0.520821609414795,
+      "ci_low": 0.3960491896529192,
+      "favorable_count": 30,
+      "mean_improvement": 0.4540786610869667
+    },
+    "curriculum_vs_fifo:final_holdout_nll": {
+      "ci_high": 1.0413466460064027,
+      "ci_low": 0.7429736606684492,
+      "favorable_count": 30,
+      "mean_improvement": 0.8816799066790335
+    },
+    "curriculum_vs_fifo:query_read_hit_rate": {
+      "ci_high": 0.7745833333333333,
+      "ci_low": 0.6839583333333333,
+      "favorable_count": 30,
+      "mean_improvement": 0.7260416666666666
+    },
+    "curriculum_vs_fifo:relevant_survival_rate": {
+      "ci_high": 0.7744444444444666,
+      "ci_low": 0.6838888888889,
+      "favorable_count": 30,
+      "mean_improvement": 0.7259722222222332
+    },
+    "curriculum_vs_hard:final_holdout_accuracy": {
+      "ci_high": 0.4114583333333333,
+      "ci_low": 0.3179166666666667,
+      "favorable_count": 30,
+      "mean_improvement": 0.36395833333333333
+    },
+    "curriculum_vs_hard:final_holdout_brier": {
+      "ci_high": 0.4311057150404733,
+      "ci_low": 0.3226925209283075,
+      "favorable_count": 30,
+      "mean_improvement": 0.37320356810680005
+    },
+    "curriculum_vs_hard:final_holdout_nll": {
+      "ci_high": 0.861058514178649,
+      "ci_low": 0.6051566879852966,
+      "favorable_count": 30,
+      "mean_improvement": 0.7241469632998999
+    },
+    "curriculum_vs_hard:query_read_hit_rate": {
+      "ci_high": 0.48874999999999996,
+      "ci_low": 0.3720833333333334,
+      "favorable_count": 30,
+      "mean_improvement": 0.42958333333333343
+    },
+    "curriculum_vs_hard:relevant_survival_rate": {
+      "ci_high": 0.4870833333332676,
+      "ci_low": 0.3694444444443991,
+      "favorable_count": 30,
+      "mean_improvement": 0.4275694444444
+    },
+    "curriculum_vs_reservoir:final_holdout_accuracy": {
+      "ci_high": 0.52875,
+      "ci_low": 0.4524999999999999,
+      "favorable_count": 30,
+      "mean_improvement": 0.4885416666666666
+    },
+    "curriculum_vs_reservoir:final_holdout_brier": {
+      "ci_high": 0.5079432746333509,
+      "ci_low": 0.3833254113892766,
+      "favorable_count": 30,
+      "mean_improvement": 0.4412555672845334
+    },
+    "curriculum_vs_reservoir:final_holdout_nll": {
+      "ci_high": 1.012026416615574,
+      "ci_low": 0.7145779338172723,
+      "favorable_count": 30,
+      "mean_improvement": 0.8529041356521667
+    },
+    "curriculum_vs_reservoir:query_read_hit_rate": {
+      "ci_high": 0.6610416666666666,
+      "ci_low": 0.5631249999999999,
+      "favorable_count": 30,
+      "mean_improvement": 0.6091666666666667
+    },
+    "curriculum_vs_reservoir:relevant_survival_rate": {
+      "ci_high": 0.6559722222223333,
+      "ci_low": 0.5607638888889668,
+      "favorable_count": 30,
+      "mean_improvement": 0.6054166666667334
+    },
+    "direct_vs_hard:final_holdout_accuracy": {
+      "ci_high": 0.3472916666666667,
+      "ci_low": 0.18458333333333335,
+      "favorable_count": 25,
+      "mean_improvement": 0.2677083333333333
+    },
+    "direct_vs_hard:final_holdout_brier": {
+      "ci_high": 0.36340812511123494,
+      "ci_low": 0.20805226940748087,
+      "favorable_count": 26,
+      "mean_improvement": 0.28338864218890003
+    },
+    "direct_vs_hard:final_holdout_nll": {
+      "ci_high": 0.7193256293008217,
+      "ci_low": 0.3858186227692942,
+      "favorable_count": 26,
+      "mean_improvement": 0.5446458271755332
+    },
+    "direct_vs_hard:query_read_hit_rate": {
+      "ci_high": 0.4181249999999999,
+      "ci_low": 0.20666666666666664,
+      "favorable_count": 25,
+      "mean_improvement": 0.31479166666666664
+    },
+    "direct_vs_hard:relevant_survival_rate": {
+      "ci_high": 0.41555555555553336,
+      "ci_low": 0.20520833333323332,
+      "favorable_count": 26,
+      "mean_improvement": 0.31326388888883333
+    }
+  },
+  "independent_rng": "numpy.default_rng(9012026)",
+  "nonperfect_summary": {
+    "mean_accuracy": 0.73875,
+    "mean_distractor_write_rate": 0.29605555555555996,
+    "mean_query_hit": 0.67125,
+    "mean_relevant_eviction_rate": 0.03466666666656,
+    "seed_count": 25
+  },
+  "perfect_seeds": [
+    2,
+    15,
+    18,
+    22,
+    29
+  ]
+}

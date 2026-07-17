@@ -34,6 +34,12 @@ enum class ExperimentCondition {
   kv_reservoir,
   kv_hard_retention,
   kv_annealed_retention,
+  kv_delayed_oracle,
+  kv_delayed_fifo,
+  kv_delayed_reservoir,
+  kv_delayed_hard,
+  kv_delayed_annealed_direct,
+  kv_delayed_annealed_curriculum,
 };
 
 enum class ModelPreset {
@@ -61,6 +67,12 @@ enum class ModelPreset {
   kv_reservoir,
   kv_hard_retention,
   kv_annealed_retention,
+  kv_delayed_oracle,
+  kv_delayed_fifo,
+  kv_delayed_reservoir,
+  kv_delayed_hard,
+  kv_delayed_annealed_direct,
+  kv_delayed_annealed_curriculum,
   sgw = sgw_redundant,
 };
 

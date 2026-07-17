@@ -1,0 +1,39 @@
+{
+  "analysis_seed": 20260717,
+  "baseline_comparison_gate_pass": true,
+  "bootstrap_replicates": 50000,
+  "causal_gate_pass": true,
+  "causal_rows": 390,
+  "conditions": [
+    "kv_delayed_oracle",
+    "kv_delayed_fifo",
+    "kv_delayed_reservoir",
+    "kv_delayed_hard",
+    "kv_delayed_annealed_direct",
+    "kv_delayed_annealed_curriculum"
+  ],
+  "curriculum_advantage_gate_pass": true,
+  "formal_run": true,
+  "hard_only_window_gate_pass": true,
+  "interventions": [
+    "intact",
+    "zero_query_context",
+    "randomized_retention_actions",
+    "force_fifo_retention",
+    "force_relevant_eviction",
+    "permuted_context_labels",
+    "disable_retention_skip",
+    "no_workspace_writes",
+    "no_workspace_persistence",
+    "no_mechanism_output",
+    "remove_delay_distractors",
+    "relevant_looking_delay_distractors",
+    "reverse_delay_block"
+  ],
+  "long_horizon_capability_gate_pass": false,
+  "oracle_capacity_gate_pass": true,
+  "overall_gate_pass": false,
+  "run_rows": 180,
+  "seed_count": 30,
+  "seed_start": 0
+}

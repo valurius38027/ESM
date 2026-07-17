@@ -291,6 +291,8 @@ BindingSample make_retention_sample(
   sample.tokens.reserve(config.sequence_length());
   sample.roles.reserve(config.sequence_length());
   sample.binding_relevance.reserve(config.binding_count);
+  sample.binding_is_delay_distractor.reserve(config.total_binding_count());
+  sample.delay_binding_count = config.delay_binding_count;
   sample.tokens.push_back(vocabulary.context_token(context));
   sample.roles.push_back(TokenRole::context);
 
@@ -300,6 +302,7 @@ BindingSample make_retention_sample(
     sample.tokens.push_back(vocabulary.entity_token(entity));
     sample.roles.push_back(TokenRole::entity);
     sample.binding_relevance.push_back(config.is_relevant(context, entity));
+    sample.binding_is_delay_distractor.push_back(false);
 
     std::size_t value = bounded_random(generator, config.value_count - 1);
     const std::size_t held_out = entity % config.value_count;
@@ -313,11 +316,26 @@ BindingSample make_retention_sample(
       sample.source_value_position = entity_position + 1;
     }
   }
+  for (std::size_t delay = 0; delay < config.delay_binding_count; ++delay) {
+    const std::size_t entity = irrelevant.at(
+        bounded_random(generator, irrelevant.size()));
+    sample.tokens.push_back(vocabulary.entity_token(entity));
+    sample.roles.push_back(TokenRole::entity);
+    sample.binding_relevance.push_back(false);
+    sample.binding_is_delay_distractor.push_back(true);
+    std::size_t value = bounded_random(generator, config.value_count - 1);
+    const std::size_t held_out = entity % config.value_count;
+    if (value >= held_out) ++value;
+    sample.tokens.push_back(vocabulary.value_token(value));
+    sample.roles.push_back(TokenRole::value);
+  }
   sample.tokens.push_back(vocabulary.query_token());
   sample.roles.push_back(TokenRole::query_marker);
   sample.query_entity_position = sample.tokens.size();
   sample.tokens.push_back(vocabulary.entity_token(sample.queried_entity));
   sample.roles.push_back(TokenRole::query_entity);
+  sample.source_query_distance =
+      sample.query_entity_position - sample.source_value_position;
   return sample;
 }
 
@@ -484,8 +502,13 @@ void RetentionTaskConfig::validate() const {
   }
 }
 
+std::size_t RetentionTaskConfig::total_binding_count() const {
+  return checked_add(binding_count, delay_binding_count,
+                     "retention binding count overflow");
+}
+
 std::size_t RetentionTaskConfig::sequence_length() const {
-  return checked_add(checked_multiply(binding_count, 2,
+  return checked_add(checked_multiply(total_binding_count(), 2,
                                       "retention sequence length overflow"),
                      3, "retention sequence length overflow");
 }
@@ -519,6 +542,38 @@ RetentionBindingStream::RetentionBindingStream(
   require_positive(sample_count, "sample_count");
   samples_ = make_unique_retention_samples(
       config_, vocabulary_, sample_count, seed, false);
+}
+
+RetentionBindingStream::RetentionBindingStream(
+    const RetentionTaskConfig& config,
+    std::uint64_t seed,
+    std::span<const std::size_t> delay_schedule)
+    : config_(config),
+      vocabulary_{config.entity_count, config.value_count, 1,
+                  config.context_count} {
+  config_.validate();
+  require_positive(delay_schedule.size(), "delay_schedule");
+  std::mt19937_64 generator(seed);
+  std::unordered_set<std::string> seen;
+  samples_.reserve(delay_schedule.size());
+  for (const std::size_t delay : delay_schedule) {
+    RetentionTaskConfig sample_config = config_;
+    sample_config.delay_binding_count = delay;
+    sample_config.validate();
+    bool inserted = false;
+    for (std::size_t attempt = 0; attempt < 10000 && !inserted; ++attempt) {
+      BindingSample sample = make_retention_sample(
+          sample_config, vocabulary_, generator, false);
+      const std::string key = literal_key(sample.tokens);
+      if (!seen.insert(key).second) continue;
+      samples_.push_back(std::move(sample));
+      inserted = true;
+    }
+    if (!inserted) {
+      throw std::runtime_error(
+          "could not generate unique scheduled retention sample");
+    }
+  }
 }
 
 BindingSample RetentionBindingStream::next() {

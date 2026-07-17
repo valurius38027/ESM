@@ -314,3 +314,43 @@ SGW_TEST(retention_stream_training_consumes_exact_budget_and_records_policy) {
   SGW_REQUIRE(lhs.relevant_eviction_rate.size() == training.steps);
   SGW_REQUIRE(lhs.queried_entity_retention_rate.size() == training.steps);
 }
+
+SGW_TEST(phase9_curriculum_schedule_exposes_delay18_before_hard_only_tail) {
+  std::vector<std::size_t> counts(4, 0);
+  constexpr std::array<std::size_t, 4> delays{0, 6, 12, 18};
+  for (std::size_t step = 0; step < 1800; ++step) {
+    const auto delay = sgw::phase9_curriculum_delay(step, 1800);
+    const auto found = std::find(delays.begin(), delays.end(), delay);
+    SGW_REQUIRE(found != delays.end());
+    ++counts[static_cast<std::size_t>(found - delays.begin())];
+  }
+  SGW_REQUIRE(counts == std::vector<std::size_t>({270, 270, 360, 900}));
+  SGW_REQUIRE(sgw::phase9_curriculum_delay(899, 1800) == 12);
+  SGW_REQUIRE(sgw::phase9_curriculum_delay(900, 1800) == 18);
+  SGW_REQUIRE(sgw::phase9_curriculum_delay(1349, 1800) == 18);
+  SGW_REQUIRE(sgw::phase9_curriculum_delay(1350, 1800) == 18);
+}
+
+SGW_TEST(phase9_curriculum_stream_records_delay_quarters_and_delayed_metrics) {
+  sgw::RetentionTaskConfig task;
+  const std::vector<std::size_t> schedule{0, 0, 6, 6, 12, 12, 18, 18};
+  sgw::RetentionBindingStream stream(task, 8844, schedule);
+  const auto config = sgw::make_model_config(
+      sgw::ModelPreset::kv_delayed_annealed_curriculum, 20, 6);
+  sgw::SgwEsmModel model(config, 8845);
+  sgw::AdamConfig adam;
+  adam.learning_rate = 0.01;
+  sgw::TrainingConfig training;
+  training.steps = 4;
+  training.batch_size = 2;
+  const auto history = sgw::train_steps(model, stream, adam, training);
+  SGW_REQUIRE(history.samples_consumed == schedule.size());
+  SGW_REQUIRE(history.mean_delay_binding_count ==
+              std::vector<double>({0.0, 6.0, 12.0, 18.0}));
+  SGW_REQUIRE(history.mean_source_query_distance.size() == training.steps);
+  SGW_REQUIRE(history.mean_source_query_distance[0] <
+              history.mean_source_query_distance[3]);
+  SGW_REQUIRE(history.distractor_write_rate.size() == training.steps);
+  SGW_REQUIRE(history.distractor_eviction_rate.size() == training.steps);
+  SGW_REQUIRE(history.relevant_survival_rate.size() == training.steps);
+}

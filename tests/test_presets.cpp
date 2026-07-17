@@ -368,3 +368,43 @@ SGW_TEST(phase8_retention_presets_have_exact_capacity_and_parameter_budgets) {
   SGW_REQUIRE(has_parameter(annealed_model, "kv_retention_age_weight"));
   SGW_REQUIRE(annealed.key_value_router_anneal_steps == 900);
 }
+
+SGW_TEST(phase9_conditions_map_to_delayed_retention_presets) {
+  using sgw::ExperimentCondition;
+  SGW_REQUIRE(sgw::parse_experiment_condition("kv_delayed_oracle") ==
+              ExperimentCondition::kv_delayed_oracle);
+  SGW_REQUIRE(sgw::parse_experiment_condition("kv_delayed_fifo") ==
+              ExperimentCondition::kv_delayed_fifo);
+  SGW_REQUIRE(sgw::parse_experiment_condition("kv_delayed_reservoir") ==
+              ExperimentCondition::kv_delayed_reservoir);
+  SGW_REQUIRE(sgw::parse_experiment_condition("kv_delayed_hard") ==
+              ExperimentCondition::kv_delayed_hard);
+  SGW_REQUIRE(sgw::parse_experiment_condition("kv_delayed_annealed_direct") ==
+              ExperimentCondition::kv_delayed_annealed_direct);
+  SGW_REQUIRE(sgw::parse_experiment_condition(
+                  "kv_delayed_annealed_curriculum") ==
+              ExperimentCondition::kv_delayed_annealed_curriculum);
+  SGW_REQUIRE(sgw::model_preset_for_condition(
+                  ExperimentCondition::kv_delayed_annealed_curriculum) ==
+              sgw::ModelPreset::kv_delayed_annealed_curriculum);
+  SGW_REQUIRE(sgw::experiment_condition_name(
+                  ExperimentCondition::kv_delayed_annealed_direct) ==
+              std::string_view("kv_delayed_annealed_direct"));
+}
+
+SGW_TEST(phase9_direct_and_curriculum_presets_are_parameter_identical) {
+  const auto direct = sgw::make_model_config(
+      sgw::ModelPreset::kv_delayed_annealed_direct, 20, 6);
+  const auto curriculum = sgw::make_model_config(
+      sgw::ModelPreset::kv_delayed_annealed_curriculum, 20, 6);
+  sgw::SgwEsmModel direct_model(direct, 73);
+  sgw::SgwEsmModel curriculum_model(curriculum, 73);
+  SGW_REQUIRE(direct.key_value_retention ==
+              sgw::KeyValueRetentionMode::annealed_learned);
+  SGW_REQUIRE(curriculum.key_value_retention ==
+              sgw::KeyValueRetentionMode::annealed_learned);
+  SGW_REQUIRE(direct.key_value_router_anneal_steps == 1350);
+  SGW_REQUIRE(curriculum.key_value_router_anneal_steps == 1350);
+  SGW_REQUIRE(direct_model.parameters().scalar_count() == 145);
+  SGW_REQUIRE(curriculum_model.parameters().scalar_count() == 145);
+}

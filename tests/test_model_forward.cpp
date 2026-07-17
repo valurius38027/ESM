@@ -378,3 +378,31 @@ SGW_TEST(phase8_reservoir_policy_is_seed_deterministic) {
   }
   SGW_REQUIRE(forward_logits(lhs) == forward_logits(rhs));
 }
+
+SGW_TEST(phase9_retention_forward_accepts_variable_delay_lengths) {
+  const std::vector<int> prefix{17, 0, 11, 1, 10, 3, 12, 2, 13,
+                                6, 14, 4, 9};
+  const std::vector<std::pair<int, int>> distractors{
+      {1, 12}, {2, 11}, {4, 13}, {5, 10}, {7, 9}, {8, 12}};
+  for (const std::size_t delay : {std::size_t{0}, std::size_t{6},
+                                  std::size_t{12}, std::size_t{24}}) {
+    std::vector<int> tokens = prefix;
+    for (std::size_t index = 0; index < delay; ++index) {
+      const auto [entity, value] = distractors[index % distractors.size()];
+      tokens.push_back(entity);
+      tokens.push_back(value);
+    }
+    tokens.push_back(16);
+    tokens.push_back(0);
+    auto config = sgw::make_model_config(
+        sgw::ModelPreset::kv_oracle_retention, 20, 6);
+    sgw::SgwEsmModel model(config, 991 + delay);
+    sgw::ad::Tape tape;
+    const auto result = model.forward_sequence(tape, tokens, true);
+    SGW_REQUIRE(result.traces.size() == tokens.size());
+    SGW_REQUIRE(result.traces.back().queried_entity_retained);
+    SGW_REQUIRE(result.traces.back().query_read_hit);
+    SGW_REQUIRE(result.traces.back().relevant_survival_count == 3);
+    SGW_REQUIRE(result.traces.back().relevant_survival_total == 3);
+  }
+}
