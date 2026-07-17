@@ -91,6 +91,21 @@ void TrainingConfig::validate() const {
   }
 }
 
+std::size_t phase9_curriculum_delay(std::size_t step,
+                                    std::size_t total_steps) {
+  if (total_steps == 0 || step >= total_steps) {
+    throw std::invalid_argument(
+        "phase9 curriculum step must be within a non-empty schedule");
+  }
+  const std::size_t delay0_end = (total_steps * 15) / 100;
+  const std::size_t delay6_end = (total_steps * 30) / 100;
+  const std::size_t delay12_end = total_steps / 2;
+  if (step < delay0_end) return 0;
+  if (step < delay6_end) return 6;
+  if (step < delay12_end) return 12;
+  return 18;
+}
+
 double workspace_aux_weight_at_step(const TrainingConfig& config,
                                     std::size_t step) {
   config.validate();
@@ -181,8 +196,17 @@ EvaluationMetrics evaluate(SgwEsmModel& model,
   std::size_t total_query_read_hits = 0;
   double total_retained_age = 0.0;
   std::size_t total_retained_age_count = 0;
+  std::size_t total_delay_bindings = 0;
+  std::size_t total_source_query_distance = 0;
+  std::size_t total_distractor_decisions = 0;
+  std::size_t total_distractor_writes = 0;
+  std::size_t total_distractor_evictions = 0;
+  std::size_t total_relevant_survival = 0;
+  std::size_t total_relevant_survival_possible = 0;
 
   for (const BindingSample& sample : samples) {
+    total_delay_bindings += sample.delay_binding_count;
+    total_source_query_distance += sample.source_query_distance;
     ad::Tape tape;
     const SequenceResult result =
         model.forward_sequence(tape, sample.tokens, collect_routes, intervention);
@@ -230,6 +254,9 @@ EvaluationMetrics evaluate(SgwEsmModel& model,
         total_retention_skips += trace.retention_skips;
         total_retention_evictions += trace.retention_evictions;
         total_relevant_evictions += trace.relevant_evictions;
+        total_distractor_decisions += trace.delay_distractor_decisions;
+        total_distractor_writes += trace.distractor_writes;
+        total_distractor_evictions += trace.distractor_evictions;
         total_retention_decisions +=
             trace.retention_writes + trace.retention_skips;
         if (trace.queried_entity_retained || !trace.read_slots.empty()) {
@@ -238,6 +265,8 @@ EvaluationMetrics evaluate(SgwEsmModel& model,
           if (trace.query_read_hit) ++total_query_read_hits;
           total_retained_age += trace.retained_age_sum;
           total_retained_age_count += trace.retained_age_count;
+          total_relevant_survival += trace.relevant_survival_count;
+          total_relevant_survival_possible += trace.relevant_survival_total;
         }
         for (const std::size_t slot : trace.writer_slots) {
           ++metrics.write_slot_load.at(slot);
@@ -268,6 +297,10 @@ EvaluationMetrics evaluate(SgwEsmModel& model,
   metrics.mean_brier = total_brier / sample_count;
   metrics.mean_max_confidence = total_max_confidence / sample_count;
   metrics.mean_true_class_probability = total_true_probability / sample_count;
+  metrics.mean_delay_binding_count =
+      static_cast<double>(total_delay_bindings) / sample_count;
+  metrics.mean_source_query_distance =
+      static_cast<double>(total_source_query_distance) / sample_count;
   for (std::size_t bin = 0; bin < calibration_bins; ++bin) {
     if (bin_counts[bin] == 0) continue;
     const double count = static_cast<double>(bin_counts[bin]);
@@ -317,6 +350,19 @@ EvaluationMetrics evaluate(SgwEsmModel& model,
       metrics.mean_retained_age = total_retained_age /
           static_cast<double>(total_retained_age_count);
     }
+    if (total_distractor_decisions != 0) {
+      const double distractors =
+          static_cast<double>(total_distractor_decisions);
+      metrics.distractor_write_rate =
+          static_cast<double>(total_distractor_writes) / distractors;
+      metrics.distractor_eviction_rate =
+          static_cast<double>(total_distractor_evictions) / distractors;
+    }
+    if (total_relevant_survival_possible != 0) {
+      metrics.relevant_survival_rate =
+          static_cast<double>(total_relevant_survival) /
+          static_cast<double>(total_relevant_survival_possible);
+    }
   }
   return metrics;
 }
@@ -347,6 +393,11 @@ TrainingHistory train_with_provider(
   history.relevant_eviction_rate.reserve(training_config.steps);
   history.queried_entity_retention_rate.reserve(training_config.steps);
   history.query_read_hit_rate.reserve(training_config.steps);
+  history.mean_delay_binding_count.reserve(training_config.steps);
+  history.mean_source_query_distance.reserve(training_config.steps);
+  history.distractor_write_rate.reserve(training_config.steps);
+  history.distractor_eviction_rate.reserve(training_config.steps);
+  history.relevant_survival_rate.reserve(training_config.steps);
 
   for (std::size_t step = 0; step < training_config.steps; ++step) {
     model.set_key_value_routing_step(step);
@@ -368,10 +419,19 @@ TrainingHistory train_with_provider(
     std::size_t query_sequences = 0;
     std::size_t queried_retained = 0;
     std::size_t query_read_hits = 0;
+    std::size_t delay_bindings = 0;
+    std::size_t source_query_distance = 0;
+    std::size_t distractor_decisions = 0;
+    std::size_t distractor_writes = 0;
+    std::size_t distractor_evictions = 0;
+    std::size_t relevant_survival = 0;
+    std::size_t relevant_survival_possible = 0;
     for (std::size_t batch_index = 0;
          batch_index < training_config.batch_size; ++batch_index) {
       const BindingSample sample = next_sample();
       ++history.samples_consumed;
+      delay_bindings += sample.delay_binding_count;
+      source_query_distance += sample.source_query_distance;
       ad::Tape tape;
       const bool capture_routing =
           model.config().key_value_mode != KeyValueMediationMode::none;
@@ -387,12 +447,17 @@ TrainingHistory train_with_provider(
           retention_skips += trace.retention_skips;
           retention_evictions += trace.retention_evictions;
           relevant_evictions += trace.relevant_evictions;
+          distractor_decisions += trace.delay_distractor_decisions;
+          distractor_writes += trace.distractor_writes;
+          distractor_evictions += trace.distractor_evictions;
           retention_decisions +=
               trace.retention_writes + trace.retention_skips;
           if (trace.queried_entity_retained || !trace.read_slots.empty()) {
             ++query_sequences;
             if (trace.queried_entity_retained) ++queried_retained;
             if (trace.query_read_hit) ++query_read_hits;
+            relevant_survival += trace.relevant_survival_count;
+            relevant_survival_possible += trace.relevant_survival_total;
           }
         }
       }
@@ -434,6 +499,10 @@ TrainingHistory train_with_provider(
     history.workspace_aux_weight.push_back(auxiliary_weight);
     history.gradient_norm.push_back(gradient_norm);
     history.clip_scale.push_back(optimizer.last_clip_scale());
+    history.mean_delay_binding_count.push_back(
+        static_cast<double>(delay_bindings) * inverse_batch);
+    history.mean_source_query_distance.push_back(
+        static_cast<double>(source_query_distance) * inverse_batch);
     if (routing_decisions == 0) {
       history.routing_collision_rate.push_back(0.0);
       history.routing_entropy.push_back(0.0);
@@ -472,6 +541,21 @@ TrainingHistory train_with_provider(
       history.query_read_hit_rate.push_back(
           static_cast<double>(query_read_hits) / queries);
     }
+    if (distractor_decisions == 0) {
+      history.distractor_write_rate.push_back(0.0);
+      history.distractor_eviction_rate.push_back(0.0);
+    } else {
+      const double distractors = static_cast<double>(distractor_decisions);
+      history.distractor_write_rate.push_back(
+          static_cast<double>(distractor_writes) / distractors);
+      history.distractor_eviction_rate.push_back(
+          static_cast<double>(distractor_evictions) / distractors);
+    }
+    history.relevant_survival_rate.push_back(
+        relevant_survival_possible == 0
+            ? 0.0
+            : static_cast<double>(relevant_survival) /
+                  static_cast<double>(relevant_survival_possible));
   }
   return history;
 }

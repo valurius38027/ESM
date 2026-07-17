@@ -32,6 +32,12 @@ ExperimentCondition parse_experiment_condition(std::string_view value) {
   if (value == "kv_reservoir") return ExperimentCondition::kv_reservoir;
   if (value == "kv_hard_retention") return ExperimentCondition::kv_hard_retention;
   if (value == "kv_annealed_retention") return ExperimentCondition::kv_annealed_retention;
+  if (value == "kv_delayed_oracle") return ExperimentCondition::kv_delayed_oracle;
+  if (value == "kv_delayed_fifo") return ExperimentCondition::kv_delayed_fifo;
+  if (value == "kv_delayed_reservoir") return ExperimentCondition::kv_delayed_reservoir;
+  if (value == "kv_delayed_hard") return ExperimentCondition::kv_delayed_hard;
+  if (value == "kv_delayed_annealed_direct") return ExperimentCondition::kv_delayed_annealed_direct;
+  if (value == "kv_delayed_annealed_curriculum") return ExperimentCondition::kv_delayed_annealed_curriculum;
   throw std::invalid_argument("unknown experiment condition: " + std::string(value));
 }
 
@@ -63,6 +69,12 @@ std::string_view experiment_condition_name(ExperimentCondition condition) noexce
     case ExperimentCondition::kv_reservoir: return "kv_reservoir";
     case ExperimentCondition::kv_hard_retention: return "kv_hard_retention";
     case ExperimentCondition::kv_annealed_retention: return "kv_annealed_retention";
+    case ExperimentCondition::kv_delayed_oracle: return "kv_delayed_oracle";
+    case ExperimentCondition::kv_delayed_fifo: return "kv_delayed_fifo";
+    case ExperimentCondition::kv_delayed_reservoir: return "kv_delayed_reservoir";
+    case ExperimentCondition::kv_delayed_hard: return "kv_delayed_hard";
+    case ExperimentCondition::kv_delayed_annealed_direct: return "kv_delayed_annealed_direct";
+    case ExperimentCondition::kv_delayed_annealed_curriculum: return "kv_delayed_annealed_curriculum";
   }
   return "unknown";
 }
@@ -113,6 +125,18 @@ ModelPreset model_preset_for_condition(ExperimentCondition condition) noexcept {
       return ModelPreset::kv_hard_retention;
     case ExperimentCondition::kv_annealed_retention:
       return ModelPreset::kv_annealed_retention;
+    case ExperimentCondition::kv_delayed_oracle:
+      return ModelPreset::kv_delayed_oracle;
+    case ExperimentCondition::kv_delayed_fifo:
+      return ModelPreset::kv_delayed_fifo;
+    case ExperimentCondition::kv_delayed_reservoir:
+      return ModelPreset::kv_delayed_reservoir;
+    case ExperimentCondition::kv_delayed_hard:
+      return ModelPreset::kv_delayed_hard;
+    case ExperimentCondition::kv_delayed_annealed_direct:
+      return ModelPreset::kv_delayed_annealed_direct;
+    case ExperimentCondition::kv_delayed_annealed_curriculum:
+      return ModelPreset::kv_delayed_annealed_curriculum;
   }
   return ModelPreset::core_small;
 }
@@ -156,6 +180,12 @@ ModelPreset parse_model_preset(std::string_view value) {
   if (value == "kv_reservoir") return ModelPreset::kv_reservoir;
   if (value == "kv_hard_retention") return ModelPreset::kv_hard_retention;
   if (value == "kv_annealed_retention") return ModelPreset::kv_annealed_retention;
+  if (value == "kv_delayed_oracle") return ModelPreset::kv_delayed_oracle;
+  if (value == "kv_delayed_fifo") return ModelPreset::kv_delayed_fifo;
+  if (value == "kv_delayed_reservoir") return ModelPreset::kv_delayed_reservoir;
+  if (value == "kv_delayed_hard") return ModelPreset::kv_delayed_hard;
+  if (value == "kv_delayed_annealed_direct") return ModelPreset::kv_delayed_annealed_direct;
+  if (value == "kv_delayed_annealed_curriculum") return ModelPreset::kv_delayed_annealed_curriculum;
   throw std::invalid_argument("unknown model preset: " + std::string(value));
 }
 
@@ -185,6 +215,12 @@ std::string_view model_preset_name(ModelPreset preset) noexcept {
     case ModelPreset::kv_reservoir: return "kv_reservoir";
     case ModelPreset::kv_hard_retention: return "kv_hard_retention";
     case ModelPreset::kv_annealed_retention: return "kv_annealed_retention";
+    case ModelPreset::kv_delayed_oracle: return "kv_delayed_oracle";
+    case ModelPreset::kv_delayed_fifo: return "kv_delayed_fifo";
+    case ModelPreset::kv_delayed_reservoir: return "kv_delayed_reservoir";
+    case ModelPreset::kv_delayed_hard: return "kv_delayed_hard";
+    case ModelPreset::kv_delayed_annealed_direct: return "kv_delayed_annealed_direct";
+    case ModelPreset::kv_delayed_annealed_curriculum: return "kv_delayed_annealed_curriculum";
   }
   return "unknown";
 }
@@ -260,7 +296,13 @@ ModelConfig make_model_config(ModelPreset preset, std::size_t vocab_size,
     case ModelPreset::kv_fifo_eviction:
     case ModelPreset::kv_reservoir:
     case ModelPreset::kv_hard_retention:
-    case ModelPreset::kv_annealed_retention:
+    case ModelPreset::kv_delayed_oracle:
+    case ModelPreset::kv_delayed_fifo:
+    case ModelPreset::kv_delayed_reservoir:
+    case ModelPreset::kv_delayed_hard:
+    case ModelPreset::kv_delayed_annealed_direct:
+    case ModelPreset::kv_delayed_annealed_curriculum:
+    case ModelPreset::kv_annealed_retention: {
       config.embedding_dim = 1;
       config.spine_dim = 1;
       config.mechanism_count = 7;
@@ -285,21 +327,33 @@ ModelConfig make_model_config(ModelPreset preset, std::size_t vocab_size,
       config.key_value_logit_scale = 6.0;
       config.key_value_mode = KeyValueMediationMode::learned_tied;
       config.key_value_write_routing = KeyValueWriteRoutingMode::first_free;
-      config.key_value_router_anneal_steps = 900;
+      const bool phase9 =
+          preset == ModelPreset::kv_delayed_oracle ||
+          preset == ModelPreset::kv_delayed_fifo ||
+          preset == ModelPreset::kv_delayed_reservoir ||
+          preset == ModelPreset::kv_delayed_hard ||
+          preset == ModelPreset::kv_delayed_annealed_direct ||
+          preset == ModelPreset::kv_delayed_annealed_curriculum;
+      config.key_value_router_anneal_steps = phase9 ? 1350 : 900;
       if (preset == ModelPreset::kv_full_capacity) {
         config.key_value_retention = KeyValueRetentionMode::full_capacity;
-      } else if (preset == ModelPreset::kv_oracle_retention) {
+      } else if (preset == ModelPreset::kv_oracle_retention ||
+                 preset == ModelPreset::kv_delayed_oracle) {
         config.key_value_retention = KeyValueRetentionMode::oracle;
-      } else if (preset == ModelPreset::kv_fifo_eviction) {
+      } else if (preset == ModelPreset::kv_fifo_eviction ||
+                 preset == ModelPreset::kv_delayed_fifo) {
         config.key_value_retention = KeyValueRetentionMode::fifo;
-      } else if (preset == ModelPreset::kv_reservoir) {
+      } else if (preset == ModelPreset::kv_reservoir ||
+                 preset == ModelPreset::kv_delayed_reservoir) {
         config.key_value_retention = KeyValueRetentionMode::reservoir;
-      } else if (preset == ModelPreset::kv_hard_retention) {
+      } else if (preset == ModelPreset::kv_hard_retention ||
+                 preset == ModelPreset::kv_delayed_hard) {
         config.key_value_retention = KeyValueRetentionMode::hard_learned;
       } else {
         config.key_value_retention = KeyValueRetentionMode::annealed_learned;
       }
       break;
+    }
     case ModelPreset::structural_kv_exact:
     case ModelPreset::structural_kv_learned:
     case ModelPreset::kv_fixed_position:

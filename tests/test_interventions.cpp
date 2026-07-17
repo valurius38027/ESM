@@ -367,3 +367,37 @@ SGW_TEST(phase8_retention_interventions_are_explicit_and_change_policy) {
                   sgw::ForwardIntervention::disable_retention_skip) ==
               std::string_view("disable_retention_skip"));
 }
+
+SGW_TEST(phase9_delay_interventions_are_explicit_and_change_delay_actions) {
+  const auto config = sgw::make_model_config(
+      sgw::ModelPreset::kv_annealed_retention, 20, 6);
+  sgw::SgwEsmModel model(config, 9911);
+  const std::vector<int> tokens{
+      17, 0, 11, 1, 10, 3, 12, 2, 13, 6, 14, 4, 9,
+      1, 12, 2, 11, 4, 13, 5, 10, 7, 9, 8, 12, 16, 0};
+  const auto actions = [&](sgw::ForwardIntervention intervention) {
+    sgw::ad::Tape tape;
+    const auto result = model.forward_sequence(tape, tokens, true, intervention);
+    std::vector<std::size_t> flattened;
+    for (const auto& trace : result.traces) {
+      flattened.insert(flattened.end(), trace.retention_actions.begin(),
+                       trace.retention_actions.end());
+    }
+    return flattened;
+  };
+  const auto intact = actions(sgw::ForwardIntervention::intact);
+  SGW_REQUIRE(actions(sgw::ForwardIntervention::remove_delay_distractors) !=
+              intact);
+  SGW_REQUIRE(actions(
+                  sgw::ForwardIntervention::relevant_looking_delay_distractors) !=
+              intact);
+  SGW_REQUIRE(sgw::forward_intervention_name(
+                  sgw::ForwardIntervention::remove_delay_distractors) ==
+              std::string_view("remove_delay_distractors"));
+  SGW_REQUIRE(sgw::forward_intervention_name(
+                  sgw::ForwardIntervention::relevant_looking_delay_distractors) ==
+              std::string_view("relevant_looking_delay_distractors"));
+  SGW_REQUIRE(sgw::forward_intervention_name(
+                  sgw::ForwardIntervention::reverse_delay_block) ==
+              std::string_view("reverse_delay_block"));
+}

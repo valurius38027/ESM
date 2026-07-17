@@ -34,6 +34,9 @@ enum class ForwardIntervention {
   force_relevant_eviction,
   permuted_context_labels,
   disable_retention_skip,
+  remove_delay_distractors,
+  relevant_looking_delay_distractors,
+  reverse_delay_block,
 };
 
 [[nodiscard]] std::string_view forward_intervention_name(
@@ -72,8 +75,13 @@ struct StepTrace {
   std::size_t irrelevant_writes{0};
   std::size_t relevant_evictions{0};
   std::size_t irrelevant_evictions{0};
+  std::size_t distractor_writes{0};
+  std::size_t distractor_evictions{0};
+  std::size_t delay_distractor_decisions{0};
   bool queried_entity_retained{false};
   bool query_read_hit{false};
+  std::size_t relevant_survival_count{0};
+  std::size_t relevant_survival_total{0};
   double retained_age_sum{0.0};
   std::size_t retained_age_count{0};
 
