@@ -223,3 +223,27 @@ SGW_TEST(key_value_router_config_rejects_invalid_schedule) {
   invalid.key_value_router_anneal_steps = 0;
   SGW_REQUIRE_THROWS(invalid.validate());
 }
+
+SGW_TEST(key_value_retention_config_rejects_invalid_capacity_and_context) {
+  auto config = sgw::make_model_config(
+      sgw::ModelPreset::kv_annealed_retention, 20, 6);
+  config.validate();
+
+  auto invalid = config;
+  invalid.context_count = 0;
+  SGW_REQUIRE_THROWS(invalid.validate());
+  invalid = config;
+  invalid.workspace_slots = invalid.mediation_binding_count;
+  SGW_REQUIRE_THROWS(invalid.validate());
+  invalid = config;
+  invalid.mediation_binding_count = 3;
+  SGW_REQUIRE_THROWS(invalid.validate());
+  invalid = config;
+  invalid.key_value_router_anneal_steps = 0;
+  SGW_REQUIRE_THROWS(invalid.validate());
+
+  auto full = sgw::make_model_config(
+      sgw::ModelPreset::kv_full_capacity, 20, 6);
+  full.workspace_slots = 3;
+  SGW_REQUIRE_THROWS(full.validate());
+}

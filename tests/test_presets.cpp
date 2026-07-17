@@ -295,3 +295,76 @@ SGW_TEST(phase7_router_presets_have_exact_parameter_budgets) {
   SGW_REQUIRE_NEAR(annealed.key_value_router_final_temperature, 0.1, 0.0);
   SGW_REQUIRE(annealed.key_value_router_anneal_steps == 600);
 }
+
+SGW_TEST(phase8_conditions_map_to_retention_and_eviction_presets) {
+  using sgw::ExperimentCondition;
+  SGW_REQUIRE(sgw::parse_experiment_condition("kv_full_capacity") ==
+              ExperimentCondition::kv_full_capacity);
+  SGW_REQUIRE(sgw::parse_experiment_condition("kv_oracle_retention") ==
+              ExperimentCondition::kv_oracle_retention);
+  SGW_REQUIRE(sgw::parse_experiment_condition("kv_fifo_eviction") ==
+              ExperimentCondition::kv_fifo_eviction);
+  SGW_REQUIRE(sgw::parse_experiment_condition("kv_reservoir") ==
+              ExperimentCondition::kv_reservoir);
+  SGW_REQUIRE(sgw::parse_experiment_condition("kv_hard_retention") ==
+              ExperimentCondition::kv_hard_retention);
+  SGW_REQUIRE(sgw::parse_experiment_condition("kv_annealed_retention") ==
+              ExperimentCondition::kv_annealed_retention);
+  SGW_REQUIRE(sgw::model_preset_for_condition(
+                  ExperimentCondition::kv_annealed_retention) ==
+              sgw::ModelPreset::kv_annealed_retention);
+  SGW_REQUIRE(sgw::experiment_condition_name(
+                  ExperimentCondition::kv_fifo_eviction) ==
+              std::string_view("kv_fifo_eviction"));
+}
+
+SGW_TEST(phase8_retention_presets_have_exact_capacity_and_parameter_budgets) {
+  const auto full = sgw::make_model_config(
+      sgw::ModelPreset::kv_full_capacity, 20, 6);
+  const auto oracle = sgw::make_model_config(
+      sgw::ModelPreset::kv_oracle_retention, 20, 6);
+  const auto fifo = sgw::make_model_config(
+      sgw::ModelPreset::kv_fifo_eviction, 20, 6);
+  const auto reservoir = sgw::make_model_config(
+      sgw::ModelPreset::kv_reservoir, 20, 6);
+  const auto hard = sgw::make_model_config(
+      sgw::ModelPreset::kv_hard_retention, 20, 6);
+  const auto annealed = sgw::make_model_config(
+      sgw::ModelPreset::kv_annealed_retention, 20, 6);
+  sgw::SgwEsmModel full_model(full, 31);
+  sgw::SgwEsmModel oracle_model(oracle, 31);
+  sgw::SgwEsmModel fifo_model(fifo, 31);
+  sgw::SgwEsmModel reservoir_model(reservoir, 31);
+  sgw::SgwEsmModel hard_model(hard, 31);
+  sgw::SgwEsmModel annealed_model(annealed, 31);
+
+  SGW_REQUIRE(full.workspace_slots == 6);
+  SGW_REQUIRE(oracle.workspace_slots == 3);
+  SGW_REQUIRE(fifo.workspace_slots == 3);
+  SGW_REQUIRE(reservoir.workspace_slots == 3);
+  SGW_REQUIRE(hard.workspace_slots == 3);
+  SGW_REQUIRE(annealed.workspace_slots == 3);
+  SGW_REQUIRE(full.mediation_binding_count == 6);
+  SGW_REQUIRE(annealed.context_count == 3);
+  SGW_REQUIRE(full.key_value_retention ==
+              sgw::KeyValueRetentionMode::full_capacity);
+  SGW_REQUIRE(oracle.key_value_retention ==
+              sgw::KeyValueRetentionMode::oracle);
+  SGW_REQUIRE(fifo.key_value_retention ==
+              sgw::KeyValueRetentionMode::fifo);
+  SGW_REQUIRE(reservoir.key_value_retention ==
+              sgw::KeyValueRetentionMode::reservoir);
+  SGW_REQUIRE(hard.key_value_retention ==
+              sgw::KeyValueRetentionMode::hard_learned);
+  SGW_REQUIRE(annealed.key_value_retention ==
+              sgw::KeyValueRetentionMode::annealed_learned);
+  SGW_REQUIRE(full_model.parameters().scalar_count() == 120);
+  SGW_REQUIRE(oracle_model.parameters().scalar_count() == 120);
+  SGW_REQUIRE(fifo_model.parameters().scalar_count() == 120);
+  SGW_REQUIRE(reservoir_model.parameters().scalar_count() == 120);
+  SGW_REQUIRE(hard_model.parameters().scalar_count() == 145);
+  SGW_REQUIRE(annealed_model.parameters().scalar_count() == 145);
+  SGW_REQUIRE(has_parameter(annealed_model, "kv_context_codebook"));
+  SGW_REQUIRE(has_parameter(annealed_model, "kv_retention_age_weight"));
+  SGW_REQUIRE(annealed.key_value_router_anneal_steps == 900);
+}

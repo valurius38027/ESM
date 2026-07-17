@@ -257,6 +257,103 @@ std::vector<BindingSample> enumerate_structural_samples(
   return samples;
 }
 
+
+BindingSample make_retention_sample(
+    const RetentionTaskConfig& config,
+    const BindingVocabulary& vocabulary,
+    std::mt19937_64& generator,
+    bool holdout) {
+  const std::size_t context = bounded_random(generator, config.context_count);
+  std::vector<std::size_t> relevant;
+  std::vector<std::size_t> irrelevant;
+  for (std::size_t entity = 0; entity < config.entity_count; ++entity) {
+    (config.is_relevant(context, entity) ? relevant : irrelevant)
+        .push_back(entity);
+  }
+  deterministic_shuffle(irrelevant, generator);
+  irrelevant.resize(config.binding_count - config.relevant_binding_count);
+  std::vector<std::size_t> entities = relevant;
+  entities.insert(entities.end(), irrelevant.begin(), irrelevant.end());
+  deterministic_shuffle(entities, generator);
+
+  std::vector<std::size_t> relevant_bindings;
+  for (std::size_t binding = 0; binding < entities.size(); ++binding) {
+    if (config.is_relevant(context, entities[binding])) {
+      relevant_bindings.push_back(binding);
+    }
+  }
+  const std::size_t queried_binding = relevant_bindings.at(
+      bounded_random(generator, relevant_bindings.size()));
+
+  BindingSample sample;
+  sample.context_class = context;
+  sample.queried_entity = entities[queried_binding];
+  sample.tokens.reserve(config.sequence_length());
+  sample.roles.reserve(config.sequence_length());
+  sample.binding_relevance.reserve(config.binding_count);
+  sample.tokens.push_back(vocabulary.context_token(context));
+  sample.roles.push_back(TokenRole::context);
+
+  for (std::size_t binding = 0; binding < config.binding_count; ++binding) {
+    const std::size_t entity = entities[binding];
+    const std::size_t entity_position = sample.tokens.size();
+    sample.tokens.push_back(vocabulary.entity_token(entity));
+    sample.roles.push_back(TokenRole::entity);
+    sample.binding_relevance.push_back(config.is_relevant(context, entity));
+
+    std::size_t value = bounded_random(generator, config.value_count - 1);
+    const std::size_t held_out = entity % config.value_count;
+    if (value >= held_out) ++value;
+    if (holdout && binding == queried_binding) value = held_out;
+    sample.tokens.push_back(vocabulary.value_token(value));
+    sample.roles.push_back(TokenRole::value);
+    if (binding == queried_binding) {
+      sample.target_class = value;
+      sample.source_entity_position = entity_position;
+      sample.source_value_position = entity_position + 1;
+    }
+  }
+  sample.tokens.push_back(vocabulary.query_token());
+  sample.roles.push_back(TokenRole::query_marker);
+  sample.query_entity_position = sample.tokens.size();
+  sample.tokens.push_back(vocabulary.entity_token(sample.queried_entity));
+  sample.roles.push_back(TokenRole::query_entity);
+  return sample;
+}
+
+std::vector<BindingSample> make_unique_retention_samples(
+    const RetentionTaskConfig& config,
+    const BindingVocabulary& vocabulary,
+    std::size_t count,
+    std::uint64_t seed,
+    bool holdout,
+    std::unordered_set<std::string>* forbidden = nullptr) {
+  std::mt19937_64 generator(seed);
+  std::unordered_set<std::string> seen;
+  std::vector<BindingSample> samples;
+  samples.reserve(count);
+  const std::size_t maximum_attempts = checked_multiply(
+      std::max<std::size_t>(count, 1), 1000, "retention generation overflow");
+  for (std::size_t attempt = 0;
+       samples.size() < count && attempt < maximum_attempts; ++attempt) {
+    BindingSample sample = make_retention_sample(
+        config, vocabulary, generator, holdout);
+    const std::string key = literal_key(sample.tokens);
+    if (seen.contains(key) || (forbidden != nullptr && forbidden->contains(key))) {
+      continue;
+    }
+    seen.insert(key);
+    samples.push_back(std::move(sample));
+  }
+  if (samples.size() != count) {
+    throw std::runtime_error("could not generate enough unique retention samples");
+  }
+  if (forbidden != nullptr) {
+    forbidden->insert(seen.begin(), seen.end());
+  }
+  return samples;
+}
+
 void deterministic_shuffle_samples(std::vector<BindingSample>& samples,
                                    std::uint64_t seed) {
   std::mt19937_64 generator(seed);
@@ -281,6 +378,8 @@ std::string_view token_role_name(TokenRole role) noexcept {
       return "query_marker";
     case TokenRole::query_entity:
       return "query_entity";
+    case TokenRole::context:
+      return "context";
     case TokenRole::count:
       return "count";
   }
@@ -342,8 +441,124 @@ int BindingVocabulary::query_token() const {
   return static_cast<int>(entity_count + value_count + filler_count);
 }
 
+int BindingVocabulary::context_token(std::size_t context) const {
+  if (context >= context_count) {
+    throw std::out_of_range("context id out of range");
+  }
+  return query_token() + 1 + static_cast<int>(context);
+}
+
 std::size_t BindingVocabulary::size() const {
-  return entity_count + value_count + filler_count + 1;
+  return entity_count + value_count + filler_count + 1 + context_count;
+}
+
+
+void RetentionTaskConfig::validate() const {
+  require_positive(context_count, "context_count");
+  require_positive(entity_count, "entity_count");
+  require_positive(value_count, "value_count");
+  require_positive(binding_count, "binding_count");
+  require_positive(relevant_binding_count, "relevant_binding_count");
+  require_positive(workspace_slots, "workspace_slots");
+  if (entity_count % context_count != 0) {
+    throw std::invalid_argument(
+        "entity_count must be divisible by context_count");
+  }
+  if (entity_count / context_count != relevant_binding_count) {
+    throw std::invalid_argument(
+        "each context must map to relevant_binding_count entities");
+  }
+  if (binding_count != 2 * relevant_binding_count) {
+    throw std::invalid_argument(
+        "retention task requires equal relevant and irrelevant bindings");
+  }
+  if (binding_count > entity_count || workspace_slots > binding_count) {
+    throw std::invalid_argument("invalid retention capacity");
+  }
+  static_cast<void>(sequence_length());
+  const BindingVocabulary vocabulary{entity_count, value_count, 1,
+                                     context_count};
+  if (vocabulary.size() >
+      static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+    throw std::invalid_argument("retention vocabulary does not fit int");
+  }
+}
+
+std::size_t RetentionTaskConfig::sequence_length() const {
+  return checked_add(checked_multiply(binding_count, 2,
+                                      "retention sequence length overflow"),
+                     3, "retention sequence length overflow");
+}
+
+bool RetentionTaskConfig::is_relevant(std::size_t context,
+                                      std::size_t entity) const {
+  if (context >= context_count || entity >= entity_count) {
+    throw std::out_of_range("retention context or entity out of range");
+  }
+  return entity % context_count == context;
+}
+
+BindingTaskConfig RetentionTaskConfig::binding_config() const {
+  BindingTaskConfig config;
+  config.entity_count = entity_count;
+  config.value_count = value_count;
+  config.filler_count = 1;
+  config.binding_count = binding_count;
+  config.fillers_per_binding = 0;
+  return config;
+}
+
+RetentionBindingStream::RetentionBindingStream(
+    const RetentionTaskConfig& config,
+    std::uint64_t seed,
+    std::size_t sample_count)
+    : config_(config),
+      vocabulary_{config.entity_count, config.value_count, 1,
+                  config.context_count} {
+  config_.validate();
+  require_positive(sample_count, "sample_count");
+  samples_ = make_unique_retention_samples(
+      config_, vocabulary_, sample_count, seed, false);
+}
+
+BindingSample RetentionBindingStream::next() {
+  if (cursor_ >= samples_.size()) {
+    throw std::out_of_range("retention stream exhausted");
+  }
+  return samples_[cursor_++];
+}
+
+std::size_t RetentionBindingStream::samples_consumed() const noexcept {
+  return cursor_;
+}
+
+std::size_t RetentionBindingStream::remaining() const noexcept {
+  return samples_.size() - cursor_;
+}
+
+std::size_t RetentionBindingStream::total_samples() const noexcept {
+  return samples_.size();
+}
+
+RetentionDataset make_retention_binding_split(
+    const RetentionTaskConfig& config,
+    std::size_t train_count,
+    std::size_t holdout_count,
+    std::uint64_t seed) {
+  config.validate();
+  require_positive(train_count, "train_count");
+  require_positive(holdout_count, "holdout_count");
+  RetentionDataset dataset;
+  dataset.config = config;
+  dataset.vocabulary = BindingVocabulary{
+      config.entity_count, config.value_count, 1, config.context_count};
+  std::unordered_set<std::string> used;
+  dataset.train = make_unique_retention_samples(
+      config, dataset.vocabulary, train_count, seed, false, &used);
+  dataset.holdout = make_unique_retention_samples(
+      config, dataset.vocabulary, holdout_count,
+      seed ^ 0x9e3779b97f4a7c15ULL, true, &used);
+  return dataset;
 }
 
 BindingDataset make_binding_split(const BindingTaskConfig& config,

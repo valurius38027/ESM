@@ -152,6 +152,7 @@ EvaluationMetrics evaluate(SgwEsmModel& model,
       role_count * model.config().mechanism_count, 0);
   metrics.read_slot_load.assign(model.config().workspace_slots, 0);
   metrics.write_slot_load.assign(model.config().workspace_slots, 0);
+  metrics.eviction_slot_load.assign(model.config().workspace_slots, 0);
   double total_nll = 0.0;
   double total_brier = 0.0;
   double total_max_confidence = 0.0;
@@ -170,6 +171,16 @@ EvaluationMetrics evaluate(SgwEsmModel& model,
   double total_routing_entropy = 0.0;
   std::size_t total_routing_decisions = 0;
   std::size_t total_routing_disagreements = 0;
+  std::size_t total_retention_decisions = 0;
+  std::size_t total_retention_writes = 0;
+  std::size_t total_retention_skips = 0;
+  std::size_t total_retention_evictions = 0;
+  std::size_t total_relevant_evictions = 0;
+  std::size_t total_query_sequences = 0;
+  std::size_t total_queried_retained = 0;
+  std::size_t total_query_read_hits = 0;
+  double total_retained_age = 0.0;
+  std::size_t total_retained_age_count = 0;
 
   for (const BindingSample& sample : samples) {
     ad::Tape tape;
@@ -215,8 +226,24 @@ EvaluationMetrics evaluate(SgwEsmModel& model,
         total_routing_entropy += trace.routing_entropy;
         total_routing_decisions += trace.routing_decisions;
         total_routing_disagreements += trace.hard_soft_disagreements;
+        total_retention_writes += trace.retention_writes;
+        total_retention_skips += trace.retention_skips;
+        total_retention_evictions += trace.retention_evictions;
+        total_relevant_evictions += trace.relevant_evictions;
+        total_retention_decisions +=
+            trace.retention_writes + trace.retention_skips;
+        if (trace.queried_entity_retained || !trace.read_slots.empty()) {
+          ++total_query_sequences;
+          if (trace.queried_entity_retained) ++total_queried_retained;
+          if (trace.query_read_hit) ++total_query_read_hits;
+          total_retained_age += trace.retained_age_sum;
+          total_retained_age_count += trace.retained_age_count;
+        }
         for (const std::size_t slot : trace.writer_slots) {
           ++metrics.write_slot_load.at(slot);
+        }
+        if (trace.retention_evictions != 0 && !trace.writer_slots.empty()) {
+          ++metrics.eviction_slot_load.at(trace.writer_slots.front());
         }
         const std::size_t role =
             static_cast<std::size_t>(sample.roles[step]);
@@ -268,6 +295,28 @@ EvaluationMetrics evaluate(SgwEsmModel& model,
       metrics.mean_routing_disagreement_rate =
           static_cast<double>(total_routing_disagreements) / route_count;
     }
+    if (total_retention_decisions != 0) {
+      const double decisions = static_cast<double>(total_retention_decisions);
+      metrics.retention_write_rate =
+          static_cast<double>(total_retention_writes) / decisions;
+      metrics.retention_skip_rate =
+          static_cast<double>(total_retention_skips) / decisions;
+      metrics.retention_eviction_rate =
+          static_cast<double>(total_retention_evictions) / decisions;
+      metrics.relevant_eviction_rate =
+          static_cast<double>(total_relevant_evictions) / decisions;
+    }
+    if (total_query_sequences != 0) {
+      const double queries = static_cast<double>(total_query_sequences);
+      metrics.queried_entity_retention_rate =
+          static_cast<double>(total_queried_retained) / queries;
+      metrics.query_read_hit_rate =
+          static_cast<double>(total_query_read_hits) / queries;
+    }
+    if (total_retained_age_count != 0) {
+      metrics.mean_retained_age = total_retained_age /
+          static_cast<double>(total_retained_age_count);
+    }
   }
   return metrics;
 }
@@ -292,6 +341,12 @@ TrainingHistory train_with_provider(
   history.routing_collision_rate.reserve(training_config.steps);
   history.routing_entropy.reserve(training_config.steps);
   history.routing_disagreement_rate.reserve(training_config.steps);
+  history.retention_write_rate.reserve(training_config.steps);
+  history.retention_skip_rate.reserve(training_config.steps);
+  history.retention_eviction_rate.reserve(training_config.steps);
+  history.relevant_eviction_rate.reserve(training_config.steps);
+  history.queried_entity_retention_rate.reserve(training_config.steps);
+  history.query_read_hit_rate.reserve(training_config.steps);
 
   for (std::size_t step = 0; step < training_config.steps; ++step) {
     model.set_key_value_routing_step(step);
@@ -305,6 +360,14 @@ TrainingHistory train_with_provider(
     double routing_entropy = 0.0;
     std::size_t routing_decisions = 0;
     std::size_t routing_disagreements = 0;
+    std::size_t retention_decisions = 0;
+    std::size_t retention_writes = 0;
+    std::size_t retention_skips = 0;
+    std::size_t retention_evictions = 0;
+    std::size_t relevant_evictions = 0;
+    std::size_t query_sequences = 0;
+    std::size_t queried_retained = 0;
+    std::size_t query_read_hits = 0;
     for (std::size_t batch_index = 0;
          batch_index < training_config.batch_size; ++batch_index) {
       const BindingSample sample = next_sample();
@@ -320,6 +383,17 @@ TrainingHistory train_with_provider(
           routing_entropy += trace.routing_entropy;
           routing_decisions += trace.routing_decisions;
           routing_disagreements += trace.hard_soft_disagreements;
+          retention_writes += trace.retention_writes;
+          retention_skips += trace.retention_skips;
+          retention_evictions += trace.retention_evictions;
+          relevant_evictions += trace.relevant_evictions;
+          retention_decisions +=
+              trace.retention_writes + trace.retention_skips;
+          if (trace.queried_entity_retained || !trace.read_slots.empty()) {
+            ++query_sequences;
+            if (trace.queried_entity_retained) ++queried_retained;
+            if (trace.query_read_hit) ++query_read_hits;
+          }
         }
       }
       const ad::Var primary_loss =
@@ -372,6 +446,32 @@ TrainingHistory train_with_provider(
       history.routing_disagreement_rate.push_back(
           static_cast<double>(routing_disagreements) / route_count);
     }
+    if (retention_decisions == 0) {
+      history.retention_write_rate.push_back(0.0);
+      history.retention_skip_rate.push_back(0.0);
+      history.retention_eviction_rate.push_back(0.0);
+      history.relevant_eviction_rate.push_back(0.0);
+    } else {
+      const double decisions = static_cast<double>(retention_decisions);
+      history.retention_write_rate.push_back(
+          static_cast<double>(retention_writes) / decisions);
+      history.retention_skip_rate.push_back(
+          static_cast<double>(retention_skips) / decisions);
+      history.retention_eviction_rate.push_back(
+          static_cast<double>(retention_evictions) / decisions);
+      history.relevant_eviction_rate.push_back(
+          static_cast<double>(relevant_evictions) / decisions);
+    }
+    if (query_sequences == 0) {
+      history.queried_entity_retention_rate.push_back(0.0);
+      history.query_read_hit_rate.push_back(0.0);
+    } else {
+      const double queries = static_cast<double>(query_sequences);
+      history.queried_entity_retention_rate.push_back(
+          static_cast<double>(queried_retained) / queries);
+      history.query_read_hit_rate.push_back(
+          static_cast<double>(query_read_hits) / queries);
+    }
   }
   return history;
 }
@@ -397,6 +497,19 @@ TrainingHistory train_steps(SgwEsmModel& model,
     }
     return samples[order[cursor++]];
   };
+  return train_with_provider(model, adam_config, training_config, next_sample);
+}
+
+TrainingHistory train_steps(SgwEsmModel& model,
+                            RetentionBindingStream& stream,
+                            const AdamConfig& adam_config,
+                            const TrainingConfig& training_config) {
+  const std::size_t requested = training_config.steps * training_config.batch_size;
+  if (requested > stream.remaining()) {
+    throw std::invalid_argument(
+        "retention training stream does not contain enough unique samples");
+  }
+  const auto next_sample = [&]() { return stream.next(); };
   return train_with_provider(model, adam_config, training_config, next_sample);
 }
 

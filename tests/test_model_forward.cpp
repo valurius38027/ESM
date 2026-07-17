@@ -293,3 +293,88 @@ SGW_TEST(phase7_first_free_and_learned_routes_write_one_available_slot) {
     SGW_REQUIRE(result.traces.back().read_slots.size() == 1);
   }
 }
+
+namespace {
+
+std::size_t argmax_logits(const sgw::SequenceResult& result) {
+  std::size_t best = 0;
+  for (std::size_t index = 1; index < result.logits.size(); ++index) {
+    if (result.logits[index].value() > result.logits[best].value()) best = index;
+  }
+  return best;
+}
+
+std::vector<int> scarce_retention_example() {
+  // Context 0: relevant entities are 0, 3, and 6. Query entity 0 is early,
+  // so FIFO evicts it while oracle retention preserves it.
+  return {17, 0, 11, 1, 10, 3, 12, 2, 13,
+          6, 14, 4, 9, 16, 0};
+}
+
+}  // namespace
+
+SGW_TEST(phase8_full_capacity_and_oracle_preserve_queried_binding) {
+  const auto tokens = scarce_retention_example();
+  auto full_config = sgw::make_model_config(
+      sgw::ModelPreset::kv_full_capacity, 20, 6);
+  auto oracle_config = sgw::make_model_config(
+      sgw::ModelPreset::kv_oracle_retention, 20, 6);
+  sgw::SgwEsmModel full(full_config, 41);
+  sgw::SgwEsmModel oracle(oracle_config, 41);
+  sgw::ad::Tape full_tape;
+  sgw::ad::Tape oracle_tape;
+  const auto full_result = full.forward_sequence(full_tape, tokens, true);
+  const auto oracle_result = oracle.forward_sequence(oracle_tape, tokens, true);
+
+  SGW_REQUIRE(argmax_logits(full_result) == 2);
+  SGW_REQUIRE(argmax_logits(oracle_result) == 2);
+  SGW_REQUIRE(full_result.traces.size() == tokens.size());
+  SGW_REQUIRE(oracle_result.traces.size() == tokens.size());
+  std::size_t oracle_writes = 0;
+  std::size_t oracle_skips = 0;
+  for (const auto& trace : oracle_result.traces) {
+    oracle_writes += trace.retention_writes;
+    oracle_skips += trace.retention_skips;
+  }
+  SGW_REQUIRE(oracle_writes == 3);
+  SGW_REQUIRE(oracle_skips == 3);
+  SGW_REQUIRE(oracle_result.traces.back().queried_entity_retained);
+  SGW_REQUIRE(oracle_result.traces.back().query_read_hit);
+}
+
+SGW_TEST(phase8_fifo_eviction_can_remove_an_early_relevant_binding) {
+  const auto tokens = scarce_retention_example();
+  auto config = sgw::make_model_config(
+      sgw::ModelPreset::kv_fifo_eviction, 20, 6);
+  sgw::SgwEsmModel model(config, 43);
+  sgw::ad::Tape tape;
+  const auto result = model.forward_sequence(tape, tokens, true);
+  SGW_REQUIRE(argmax_logits(result) != 2);
+  std::size_t evictions = 0;
+  std::size_t relevant_evictions = 0;
+  for (const auto& trace : result.traces) {
+    evictions += trace.retention_evictions;
+    relevant_evictions += trace.relevant_evictions;
+  }
+  SGW_REQUIRE(evictions == 3);
+  SGW_REQUIRE(relevant_evictions >= 1);
+  SGW_REQUIRE(!result.traces.back().queried_entity_retained);
+}
+
+SGW_TEST(phase8_reservoir_policy_is_seed_deterministic) {
+  const auto tokens = scarce_retention_example();
+  auto config = sgw::make_model_config(
+      sgw::ModelPreset::kv_reservoir, 20, 6);
+  sgw::SgwEsmModel first(config, 47);
+  sgw::SgwEsmModel second(config, 47);
+  sgw::ad::Tape first_tape;
+  sgw::ad::Tape second_tape;
+  const auto lhs = first.forward_sequence(first_tape, tokens, true);
+  const auto rhs = second.forward_sequence(second_tape, tokens, true);
+  SGW_REQUIRE(lhs.traces.size() == rhs.traces.size());
+  for (std::size_t index = 0; index < lhs.traces.size(); ++index) {
+    SGW_REQUIRE(lhs.traces[index].retention_actions ==
+                rhs.traces[index].retention_actions);
+  }
+  SGW_REQUIRE(forward_logits(lhs) == forward_logits(rhs));
+}

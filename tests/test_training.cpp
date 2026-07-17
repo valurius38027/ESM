@@ -289,3 +289,28 @@ SGW_TEST(phase7_training_records_routing_telemetry_and_hard_only_window) {
   SGW_REQUIRE(model.key_value_routing_step() == training.steps - 1);
   SGW_REQUIRE(!model.key_value_router_uses_surrogate());
 }
+
+SGW_TEST(retention_stream_training_consumes_exact_budget_and_records_policy) {
+  sgw::RetentionTaskConfig task;
+  sgw::RetentionBindingStream first(task, 5353, 24);
+  sgw::RetentionBindingStream second(task, 5353, 24);
+  const auto config = sgw::make_model_config(
+      sgw::ModelPreset::kv_annealed_retention, 20, 6);
+  sgw::SgwEsmModel first_model(config, 59);
+  sgw::SgwEsmModel second_model(config, 59);
+  sgw::AdamConfig adam;
+  adam.learning_rate = 0.01;
+  sgw::TrainingConfig training;
+  training.steps = 3;
+  training.batch_size = 8;
+  const auto lhs = sgw::train_steps(first_model, first, adam, training);
+  const auto rhs = sgw::train_steps(second_model, second, adam, training);
+  SGW_REQUIRE(lhs.samples_consumed == 24);
+  SGW_REQUIRE(rhs.samples_consumed == 24);
+  SGW_REQUIRE(lhs.batch_loss == rhs.batch_loss);
+  SGW_REQUIRE(lhs.retention_write_rate.size() == training.steps);
+  SGW_REQUIRE(lhs.retention_skip_rate.size() == training.steps);
+  SGW_REQUIRE(lhs.retention_eviction_rate.size() == training.steps);
+  SGW_REQUIRE(lhs.relevant_eviction_rate.size() == training.steps);
+  SGW_REQUIRE(lhs.queried_entity_retention_rate.size() == training.steps);
+}

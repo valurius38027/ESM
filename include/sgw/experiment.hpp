@@ -40,6 +40,14 @@ struct EvaluationMetrics {
   double mean_write_collision_rate{0.0};
   double mean_routing_entropy{0.0};
   double mean_routing_disagreement_rate{0.0};
+  double retention_write_rate{0.0};
+  double retention_skip_rate{0.0};
+  double retention_eviction_rate{0.0};
+  double relevant_eviction_rate{0.0};
+  double queried_entity_retention_rate{0.0};
+  double query_read_hit_rate{0.0};
+  double mean_retained_age{0.0};
+  std::vector<std::size_t> eviction_slot_load;
 };
 
 struct TrainingHistory {
@@ -52,6 +60,12 @@ struct TrainingHistory {
   std::vector<double> routing_collision_rate;
   std::vector<double> routing_entropy;
   std::vector<double> routing_disagreement_rate;
+  std::vector<double> retention_write_rate;
+  std::vector<double> retention_skip_rate;
+  std::vector<double> retention_eviction_rate;
+  std::vector<double> relevant_eviction_rate;
+  std::vector<double> queried_entity_retention_rate;
+  std::vector<double> query_read_hit_rate;
   std::size_t samples_consumed{0};
 };
 
@@ -77,6 +91,12 @@ struct TrainingHistory {
 [[nodiscard]] TrainingHistory train_steps(
     SgwEsmModel& model,
     std::span<const BindingSample> samples,
+    const AdamConfig& adam_config,
+    const TrainingConfig& training_config);
+
+[[nodiscard]] TrainingHistory train_steps(
+    SgwEsmModel& model,
+    RetentionBindingStream& stream,
     const AdamConfig& adam_config,
     const TrainingConfig& training_config);
 

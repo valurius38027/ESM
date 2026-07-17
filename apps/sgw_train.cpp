@@ -95,6 +95,18 @@ sgw::ExperimentCondition default_condition_for_preset(
       return sgw::ExperimentCondition::kv_hard_router;
     case sgw::ModelPreset::kv_annealed_router:
       return sgw::ExperimentCondition::kv_annealed_router;
+    case sgw::ModelPreset::kv_full_capacity:
+      return sgw::ExperimentCondition::kv_full_capacity;
+    case sgw::ModelPreset::kv_oracle_retention:
+      return sgw::ExperimentCondition::kv_oracle_retention;
+    case sgw::ModelPreset::kv_fifo_eviction:
+      return sgw::ExperimentCondition::kv_fifo_eviction;
+    case sgw::ModelPreset::kv_reservoir:
+      return sgw::ExperimentCondition::kv_reservoir;
+    case sgw::ModelPreset::kv_hard_retention:
+      return sgw::ExperimentCondition::kv_hard_retention;
+    case sgw::ModelPreset::kv_annealed_retention:
+      return sgw::ExperimentCondition::kv_annealed_retention;
   }
   return sgw::ExperimentCondition::core_small;
 }
@@ -114,14 +126,19 @@ Options parse_options(int argc, char** argv) {
              "structural_core_blind|structural_mediation_linear|"
              "structural_mediation_bounded|structural_kv_exact|"
              "structural_kv_learned|kv_fixed_position|kv_first_free|"
-             "kv_hard_router|kv_annealed_router] "
+             "kv_hard_router|kv_annealed_router|kv_full_capacity|"
+             "kv_oracle_retention|kv_fifo_eviction|kv_reservoir|"
+             "kv_hard_retention|kv_annealed_retention] "
              "[--preset core_small|core_compute_matched|core_param_matched|"
              "sgw|sgw_broadcast_forced|core_full_content|"
              "core_content_blind|mediation_fixed|structural_core_full|"
              "structural_core_blind|structural_mediation_linear|"
              "structural_mediation_bounded|structural_kv_exact|"
              "structural_kv_learned|kv_fixed_position|kv_first_free|"
-             "kv_hard_router|kv_annealed_router] [--mode core_only|sgw] [--seed N] "
+             "kv_hard_router|kv_annealed_router|kv_full_capacity|"
+             "kv_oracle_retention|kv_fifo_eviction|kv_reservoir|"
+             "kv_hard_retention|kv_annealed_retention] "
+             "[--mode core_only|sgw] [--seed N] "
              "[--steps N] [--batch-size N] [--train-count N] "
              "[--holdout-count N] [--output PATH] "
              "[--causal-output PATH]\n";
@@ -243,6 +260,19 @@ bool is_structural_condition(sgw::ExperimentCondition condition) noexcept {
          condition == sgw::ExperimentCondition::kv_annealed_router;
 }
 
+bool is_retention_condition(sgw::ExperimentCondition condition) noexcept {
+  return condition == sgw::ExperimentCondition::kv_full_capacity ||
+         condition == sgw::ExperimentCondition::kv_oracle_retention ||
+         condition == sgw::ExperimentCondition::kv_fifo_eviction ||
+         condition == sgw::ExperimentCondition::kv_reservoir ||
+         condition == sgw::ExperimentCondition::kv_hard_retention ||
+         condition == sgw::ExperimentCondition::kv_annealed_retention;
+}
+
+sgw::RetentionTaskConfig retention_task_config() {
+  return {};
+}
+
 sgw::BindingTaskConfig task_config(sgw::ExperimentCondition condition) {
   sgw::BindingTaskConfig config;
   config.entity_count = 6;
@@ -308,7 +338,10 @@ void prepare_parent(const std::filesystem::path& path) {
 }
 
 void write_primary_csv(const Options& options,
-                       const sgw::BindingDataset& dataset,
+                       std::size_t sequence_length,
+                       std::size_t value_count,
+                       std::size_t train_count,
+                       std::size_t holdout_count,
                        const sgw::SgwEsmModel& model,
                        const sgw::EvaluationMetrics& initial_train,
                        const sgw::EvaluationMetrics& initial_holdout,
@@ -343,14 +376,19 @@ void write_primary_csv(const Options& options,
          "mean_routing_disagreement_rate,router_initial_temperature,"
          "router_final_temperature,router_anneal_steps,"
          "final_200_collision_rate,final_200_routing_entropy,"
-         "final_200_disagreement_rate\n";
+         "final_200_disagreement_rate,retention_write_rate,"
+         "retention_skip_rate,retention_eviction_rate,relevant_eviction_rate,"
+         "queried_entity_retention_rate,query_read_hit_rate,mean_retained_age,"
+         "eviction_slot_load,final_300_retention_write_rate,"
+         "final_300_retention_skip_rate,final_300_retention_eviction_rate,"
+         "final_300_relevant_eviction_rate,final_300_query_read_hit_rate\n";
   output << std::fixed << std::setprecision(12)
          << sgw::model_preset_name(options.preset) << ',' << options.seed << ','
          << options.steps << ',' << options.batch_size << ','
-         << model.parameters().scalar_count() << ',' << options.train_count
-         << ',' << options.holdout_count << ','
-         << dataset.config.sequence_length() << ','
-         << std::log(static_cast<double>(dataset.config.value_count)) << ','
+         << model.parameters().scalar_count() << ',' << train_count
+         << ',' << holdout_count << ','
+         << sequence_length << ','
+         << std::log(static_cast<double>(value_count)) << ','
          << initial_train.mean_nll << ',' << initial_holdout.mean_nll << ','
          << final_train.mean_nll << ',' << final_holdout.mean_nll << ','
          << final_train.accuracy << ',' << final_holdout.accuracy << ','
@@ -396,49 +434,79 @@ void write_primary_csv(const Options& options,
          << model.config().key_value_router_anneal_steps << ','
          << tail_mean(history.routing_collision_rate, 200) << ','
          << tail_mean(history.routing_entropy, 200) << ','
-         << tail_mean(history.routing_disagreement_rate, 200) << '\n';
+         << tail_mean(history.routing_disagreement_rate, 200) << ','
+         << final_holdout.retention_write_rate << ','
+         << final_holdout.retention_skip_rate << ','
+         << final_holdout.retention_eviction_rate << ','
+         << final_holdout.relevant_eviction_rate << ','
+         << final_holdout.queried_entity_retention_rate << ','
+         << final_holdout.query_read_hit_rate << ','
+         << final_holdout.mean_retained_age << ','
+         << mechanism_load_text(final_holdout.eviction_slot_load) << ','
+         << tail_mean(history.retention_write_rate, 300) << ','
+         << tail_mean(history.retention_skip_rate, 300) << ','
+         << tail_mean(history.retention_eviction_rate, 300) << ','
+         << tail_mean(history.relevant_eviction_rate, 300) << ','
+         << tail_mean(history.query_read_hit_rate, 300) << '\n';
 }
 
 void write_causal_csv(const Options& options, sgw::SgwEsmModel& model,
-                      const sgw::BindingDataset& dataset) {
+                      std::span<const sgw::BindingSample> holdout) {
   const std::filesystem::path& path = *options.causal_output;
   const std::uint64_t seed = options.seed;
-  std::vector<sgw::ForwardIntervention> interventions{
-      sgw::ForwardIntervention::intact,
-      sgw::ForwardIntervention::no_broadcast,
-      sgw::ForwardIntervention::no_workspace_persistence,
-      sgw::ForwardIntervention::no_workspace_output,
-  };
-  if (!model.config().spine_reads_workspace &&
-      !model.config().output_reads_workspace) {
-    interventions.push_back(sgw::ForwardIntervention::no_spine_workspace);
-    interventions.push_back(sgw::ForwardIntervention::no_mechanism_output);
-    interventions.push_back(sgw::ForwardIntervention::workspace_disconnected);
-  }
-  if (model.config().fixed_binding_mediation ||
-      model.config().key_value_mode != sgw::KeyValueMediationMode::none) {
-    interventions.push_back(sgw::ForwardIntervention::no_workspace_writes);
-    interventions.push_back(sgw::ForwardIntervention::zero_reader_inbox);
-  }
-  if (model.config().key_value_mode != sgw::KeyValueMediationMode::none) {
-    interventions.push_back(
-        sgw::ForwardIntervention::permuted_workspace_keys);
-    interventions.push_back(sgw::ForwardIntervention::zero_query_key);
-    if (model.config().key_value_write_routing !=
-        sgw::KeyValueWriteRoutingMode::fixed_position) {
-      interventions.push_back(
-          sgw::ForwardIntervention::randomized_write_slots);
-      interventions.push_back(
-          sgw::ForwardIntervention::cleared_writer_assignment);
-      interventions.push_back(
-          sgw::ForwardIntervention::allow_write_collisions);
+  std::vector<sgw::ForwardIntervention> interventions;
+  if (model.config().key_value_retention !=
+      sgw::KeyValueRetentionMode::none) {
+    interventions = {
+        sgw::ForwardIntervention::intact,
+        sgw::ForwardIntervention::zero_query_context,
+        sgw::ForwardIntervention::randomized_retention_actions,
+        sgw::ForwardIntervention::force_fifo_retention,
+        sgw::ForwardIntervention::force_relevant_eviction,
+        sgw::ForwardIntervention::permuted_context_labels,
+        sgw::ForwardIntervention::disable_retention_skip,
+        sgw::ForwardIntervention::no_workspace_writes,
+        sgw::ForwardIntervention::no_workspace_persistence,
+        sgw::ForwardIntervention::no_mechanism_output,
+    };
+  } else {
+    interventions = {
+        sgw::ForwardIntervention::intact,
+        sgw::ForwardIntervention::no_broadcast,
+        sgw::ForwardIntervention::no_workspace_persistence,
+        sgw::ForwardIntervention::no_workspace_output,
+    };
+    if (!model.config().spine_reads_workspace &&
+        !model.config().output_reads_workspace) {
+      interventions.push_back(sgw::ForwardIntervention::no_spine_workspace);
+      interventions.push_back(sgw::ForwardIntervention::no_mechanism_output);
+      interventions.push_back(sgw::ForwardIntervention::workspace_disconnected);
     }
+    if (model.config().fixed_binding_mediation ||
+        model.config().key_value_mode != sgw::KeyValueMediationMode::none) {
+      interventions.push_back(sgw::ForwardIntervention::no_workspace_writes);
+      interventions.push_back(sgw::ForwardIntervention::zero_reader_inbox);
+    }
+    if (model.config().key_value_mode != sgw::KeyValueMediationMode::none) {
+      interventions.push_back(
+          sgw::ForwardIntervention::permuted_workspace_keys);
+      interventions.push_back(sgw::ForwardIntervention::zero_query_key);
+      if (model.config().key_value_write_routing !=
+          sgw::KeyValueWriteRoutingMode::fixed_position) {
+        interventions.push_back(
+            sgw::ForwardIntervention::randomized_write_slots);
+        interventions.push_back(
+            sgw::ForwardIntervention::cleared_writer_assignment);
+        interventions.push_back(
+            sgw::ForwardIntervention::allow_write_collisions);
+      }
+    }
+    interventions.push_back(sgw::ForwardIntervention::permuted_recipients);
   }
-  interventions.push_back(sgw::ForwardIntervention::permuted_recipients);
   std::vector<sgw::EvaluationMetrics> metrics(interventions.size());
   for (std::size_t index = 0; index < interventions.size(); ++index) {
     metrics[index] =
-        sgw::evaluate(model, dataset.holdout, true, interventions[index]);
+        sgw::evaluate(model, holdout, true, interventions[index]);
   }
   const auto& intact = metrics.front();
 
@@ -457,7 +525,10 @@ void write_causal_csv(const Options& options, sgw::SgwEsmModel& model,
          "ece_delta_vs_intact,max_confidence_delta_vs_intact,"
          "true_class_probability_delta_vs_intact,read_slot_load,"
          "write_slot_load,mean_write_collision_rate,mean_routing_entropy,"
-         "mean_routing_disagreement_rate\n";
+         "mean_routing_disagreement_rate,retention_write_rate,"
+         "retention_skip_rate,retention_eviction_rate,relevant_eviction_rate,"
+         "queried_entity_retention_rate,query_read_hit_rate,mean_retained_age,"
+         "eviction_slot_load\n";
   output << std::fixed << std::setprecision(12);
   for (std::size_t index = 0; index < interventions.size(); ++index) {
     const auto& current = metrics[index];
@@ -484,7 +555,15 @@ void write_causal_csv(const Options& options, sgw::SgwEsmModel& model,
            << mechanism_load_text(current.write_slot_load) << ','
            << current.mean_write_collision_rate << ','
            << current.mean_routing_entropy << ','
-           << current.mean_routing_disagreement_rate << '\n';
+           << current.mean_routing_disagreement_rate << ','
+           << current.retention_write_rate << ','
+           << current.retention_skip_rate << ','
+           << current.retention_eviction_rate << ','
+           << current.relevant_eviction_rate << ','
+           << current.queried_entity_retention_rate << ','
+           << current.query_read_hit_rate << ','
+           << current.mean_retained_age << ','
+           << mechanism_load_text(current.eviction_slot_load) << '\n';
   }
 }
 
@@ -494,17 +573,12 @@ int main(int argc, char** argv) {
   try {
     const Options options = parse_options(argc, argv);
     const auto started = std::chrono::steady_clock::now();
-    const sgw::BindingTaskConfig task = task_config(options.condition);
-    const sgw::BindingDataset dataset = is_structural_condition(options.condition)
-        ? sgw::make_structural_binding_split(
-              task, options.train_count, options.holdout_count,
-              options.seed ^ 0x9e3779b97f4a7c15ULL)
-        : sgw::make_binding_split(
-              task, options.train_count, options.holdout_count,
-              options.seed ^ 0x9e3779b97f4a7c15ULL);
-    const sgw::ModelConfig config = sgw::make_model_config(
-        options.preset, dataset.vocabulary.size(), dataset.config.value_count);
-    sgw::SgwEsmModel model(config, options.seed);
+    sgw::EvaluationMetrics initial_train;
+    sgw::EvaluationMetrics initial_holdout;
+    sgw::EvaluationMetrics final_train;
+    sgw::EvaluationMetrics final_holdout;
+    sgw::TrainingHistory history;
+    std::optional<sgw::SgwEsmModel> model;
 
     sgw::AdamConfig adam;
     adam.learning_rate = 0.01;
@@ -518,22 +592,60 @@ int main(int argc, char** argv) {
     training.workspace_aux_anneal_steps =
         sgw::condition_workspace_aux_anneal_steps(options.condition);
 
-    const auto initial_train = sgw::evaluate(model, dataset.train, false);
-    const auto initial_holdout = sgw::evaluate(model, dataset.holdout, false);
-    sgw::TrainingHistory history;
-    if (is_structural_condition(options.condition)) {
-      sgw::StructuralBindingStream stream(
-          task, options.seed ^ 0xd1b54a32d192ed03ULL);
-      history = sgw::train_steps(model, stream, adam, training);
+    if (is_retention_condition(options.condition)) {
+      const sgw::RetentionTaskConfig task = retention_task_config();
+      const sgw::RetentionDataset dataset = sgw::make_retention_binding_split(
+          task, options.train_count, options.holdout_count,
+          options.seed ^ 0x9e3779b97f4a7c15ULL);
+      const sgw::ModelConfig config = sgw::make_model_config(
+          options.preset, dataset.vocabulary.size(), dataset.config.value_count);
+      model.emplace(config, options.seed);
+      initial_train = sgw::evaluate(*model, dataset.train, false);
+      initial_holdout = sgw::evaluate(*model, dataset.holdout, false);
+      sgw::RetentionBindingStream stream(
+          task, options.seed ^ 0xd1b54a32d192ed03ULL,
+          options.steps * options.batch_size);
+      history = sgw::train_steps(*model, stream, adam, training);
+      final_train = sgw::evaluate(*model, dataset.train, true);
+      final_holdout = sgw::evaluate(*model, dataset.holdout, true);
+      write_primary_csv(options, dataset.config.sequence_length(),
+                        dataset.config.value_count, dataset.train.size(),
+                        dataset.holdout.size(), *model, initial_train,
+                        initial_holdout, final_train, final_holdout, history);
+      if (options.causal_output.has_value()) {
+        write_causal_csv(options, *model, dataset.holdout);
+      }
     } else {
-      history = sgw::train_steps(model, dataset.train, adam, training);
-    }
-    const auto final_train = sgw::evaluate(model, dataset.train, true);
-    const auto final_holdout = sgw::evaluate(model, dataset.holdout, true);
-    write_primary_csv(options, dataset, model, initial_train, initial_holdout,
-                      final_train, final_holdout, history);
-    if (options.causal_output.has_value()) {
-      write_causal_csv(options, model, dataset);
+      const sgw::BindingTaskConfig task = task_config(options.condition);
+      const sgw::BindingDataset dataset =
+          is_structural_condition(options.condition)
+              ? sgw::make_structural_binding_split(
+                    task, options.train_count, options.holdout_count,
+                    options.seed ^ 0x9e3779b97f4a7c15ULL)
+              : sgw::make_binding_split(
+                    task, options.train_count, options.holdout_count,
+                    options.seed ^ 0x9e3779b97f4a7c15ULL);
+      const sgw::ModelConfig config = sgw::make_model_config(
+          options.preset, dataset.vocabulary.size(), dataset.config.value_count);
+      model.emplace(config, options.seed);
+      initial_train = sgw::evaluate(*model, dataset.train, false);
+      initial_holdout = sgw::evaluate(*model, dataset.holdout, false);
+      if (is_structural_condition(options.condition)) {
+        sgw::StructuralBindingStream stream(
+            task, options.seed ^ 0xd1b54a32d192ed03ULL);
+        history = sgw::train_steps(*model, stream, adam, training);
+      } else {
+        history = sgw::train_steps(*model, dataset.train, adam, training);
+      }
+      final_train = sgw::evaluate(*model, dataset.train, true);
+      final_holdout = sgw::evaluate(*model, dataset.holdout, true);
+      write_primary_csv(options, dataset.config.sequence_length(),
+                        dataset.config.value_count, dataset.train.size(),
+                        dataset.holdout.size(), *model, initial_train,
+                        initial_holdout, final_train, final_holdout, history);
+      if (options.causal_output.has_value()) {
+        write_causal_csv(options, *model, dataset.holdout);
+      }
     }
 
     const double elapsed = std::chrono::duration<double>(
@@ -544,7 +656,7 @@ int main(int argc, char** argv) {
               << " initial_holdout_nll=" << initial_holdout.mean_nll
               << " final_holdout_nll=" << final_holdout.mean_nll
               << " final_holdout_accuracy=" << final_holdout.accuracy
-              << " parameters=" << model.parameters().scalar_count()
+              << " parameters=" << model->parameters().scalar_count()
               << " madds_per_token="
               << final_holdout.mean_estimated_madds_per_token
               << " wall_seconds=" << elapsed << '\n';

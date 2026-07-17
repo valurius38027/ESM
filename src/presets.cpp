@@ -26,6 +26,12 @@ ExperimentCondition parse_experiment_condition(std::string_view value) {
   if (value == "kv_first_free") return ExperimentCondition::kv_first_free;
   if (value == "kv_hard_router") return ExperimentCondition::kv_hard_router;
   if (value == "kv_annealed_router") return ExperimentCondition::kv_annealed_router;
+  if (value == "kv_full_capacity") return ExperimentCondition::kv_full_capacity;
+  if (value == "kv_oracle_retention") return ExperimentCondition::kv_oracle_retention;
+  if (value == "kv_fifo_eviction") return ExperimentCondition::kv_fifo_eviction;
+  if (value == "kv_reservoir") return ExperimentCondition::kv_reservoir;
+  if (value == "kv_hard_retention") return ExperimentCondition::kv_hard_retention;
+  if (value == "kv_annealed_retention") return ExperimentCondition::kv_annealed_retention;
   throw std::invalid_argument("unknown experiment condition: " + std::string(value));
 }
 
@@ -51,6 +57,12 @@ std::string_view experiment_condition_name(ExperimentCondition condition) noexce
     case ExperimentCondition::kv_first_free: return "kv_first_free";
     case ExperimentCondition::kv_hard_router: return "kv_hard_router";
     case ExperimentCondition::kv_annealed_router: return "kv_annealed_router";
+    case ExperimentCondition::kv_full_capacity: return "kv_full_capacity";
+    case ExperimentCondition::kv_oracle_retention: return "kv_oracle_retention";
+    case ExperimentCondition::kv_fifo_eviction: return "kv_fifo_eviction";
+    case ExperimentCondition::kv_reservoir: return "kv_reservoir";
+    case ExperimentCondition::kv_hard_retention: return "kv_hard_retention";
+    case ExperimentCondition::kv_annealed_retention: return "kv_annealed_retention";
   }
   return "unknown";
 }
@@ -89,6 +101,18 @@ ModelPreset model_preset_for_condition(ExperimentCondition condition) noexcept {
       return ModelPreset::kv_hard_router;
     case ExperimentCondition::kv_annealed_router:
       return ModelPreset::kv_annealed_router;
+    case ExperimentCondition::kv_full_capacity:
+      return ModelPreset::kv_full_capacity;
+    case ExperimentCondition::kv_oracle_retention:
+      return ModelPreset::kv_oracle_retention;
+    case ExperimentCondition::kv_fifo_eviction:
+      return ModelPreset::kv_fifo_eviction;
+    case ExperimentCondition::kv_reservoir:
+      return ModelPreset::kv_reservoir;
+    case ExperimentCondition::kv_hard_retention:
+      return ModelPreset::kv_hard_retention;
+    case ExperimentCondition::kv_annealed_retention:
+      return ModelPreset::kv_annealed_retention;
   }
   return ModelPreset::core_small;
 }
@@ -126,6 +150,12 @@ ModelPreset parse_model_preset(std::string_view value) {
   if (value == "kv_first_free") return ModelPreset::kv_first_free;
   if (value == "kv_hard_router") return ModelPreset::kv_hard_router;
   if (value == "kv_annealed_router") return ModelPreset::kv_annealed_router;
+  if (value == "kv_full_capacity") return ModelPreset::kv_full_capacity;
+  if (value == "kv_oracle_retention") return ModelPreset::kv_oracle_retention;
+  if (value == "kv_fifo_eviction") return ModelPreset::kv_fifo_eviction;
+  if (value == "kv_reservoir") return ModelPreset::kv_reservoir;
+  if (value == "kv_hard_retention") return ModelPreset::kv_hard_retention;
+  if (value == "kv_annealed_retention") return ModelPreset::kv_annealed_retention;
   throw std::invalid_argument("unknown model preset: " + std::string(value));
 }
 
@@ -149,6 +179,12 @@ std::string_view model_preset_name(ModelPreset preset) noexcept {
     case ModelPreset::kv_first_free: return "kv_first_free";
     case ModelPreset::kv_hard_router: return "kv_hard_router";
     case ModelPreset::kv_annealed_router: return "kv_annealed_router";
+    case ModelPreset::kv_full_capacity: return "kv_full_capacity";
+    case ModelPreset::kv_oracle_retention: return "kv_oracle_retention";
+    case ModelPreset::kv_fifo_eviction: return "kv_fifo_eviction";
+    case ModelPreset::kv_reservoir: return "kv_reservoir";
+    case ModelPreset::kv_hard_retention: return "kv_hard_retention";
+    case ModelPreset::kv_annealed_retention: return "kv_annealed_retention";
   }
   return "unknown";
 }
@@ -218,6 +254,51 @@ ModelConfig make_model_config(ModelPreset preset, std::size_t vocab_size,
       config.spine_reads_workspace = false;
       config.output_reads_workspace = false;
       config.output_reads_mechanism = false;
+      break;
+    case ModelPreset::kv_full_capacity:
+    case ModelPreset::kv_oracle_retention:
+    case ModelPreset::kv_fifo_eviction:
+    case ModelPreset::kv_reservoir:
+    case ModelPreset::kv_hard_retention:
+    case ModelPreset::kv_annealed_retention:
+      config.embedding_dim = 1;
+      config.spine_dim = 1;
+      config.mechanism_count = 7;
+      config.mechanism_dim = 1;
+      config.workspace_slots =
+          preset == ModelPreset::kv_full_capacity ? 6 : 3;
+      config.key_dim = 8;
+      config.value_dim = 8;
+      config.workspace_dim = config.key_dim + config.value_dim;
+      config.active_mechanisms = 1;
+      config.workspace_writers = 1;
+      config.broadcast_recipients = 1;
+      config.spine_reads_embedding = false;
+      config.spine_reads_workspace = false;
+      config.output_reads_spine = false;
+      config.output_reads_workspace = false;
+      config.output_reads_mechanism = true;
+      config.mediation_binding_count = 6;
+      config.entity_count = 9;
+      config.value_count = output_classes;
+      config.context_count = 3;
+      config.key_value_logit_scale = 6.0;
+      config.key_value_mode = KeyValueMediationMode::learned_tied;
+      config.key_value_write_routing = KeyValueWriteRoutingMode::first_free;
+      config.key_value_router_anneal_steps = 900;
+      if (preset == ModelPreset::kv_full_capacity) {
+        config.key_value_retention = KeyValueRetentionMode::full_capacity;
+      } else if (preset == ModelPreset::kv_oracle_retention) {
+        config.key_value_retention = KeyValueRetentionMode::oracle;
+      } else if (preset == ModelPreset::kv_fifo_eviction) {
+        config.key_value_retention = KeyValueRetentionMode::fifo;
+      } else if (preset == ModelPreset::kv_reservoir) {
+        config.key_value_retention = KeyValueRetentionMode::reservoir;
+      } else if (preset == ModelPreset::kv_hard_retention) {
+        config.key_value_retention = KeyValueRetentionMode::hard_learned;
+      } else {
+        config.key_value_retention = KeyValueRetentionMode::annealed_learned;
+      }
       break;
     case ModelPreset::structural_kv_exact:
     case ModelPreset::structural_kv_learned:
