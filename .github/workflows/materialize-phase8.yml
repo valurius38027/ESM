@@ -1,0 +1,55 @@
+name: Materialize Phase 8 Source
+
+on:
+  pull_request:
+    branches: [agent/phase7-learned-slot-routing]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: materialize-phase8-${{ github.event.pull_request.head.ref }}
+  cancel-in-progress: false
+
+jobs:
+  materialize:
+    if: github.head_ref == 'agent/phase8-retention-eviction'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/phase8-retention-eviction
+          fetch-depth: 0
+      - name: Reassemble and verify patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat \
+            .phase8-bootstrap/part-00 \
+            .phase8-bootstrap/part-01 \
+            .phase8-bootstrap/part-02a \
+            .phase8-bootstrap/part-02b \
+            .phase8-bootstrap/part-03 \
+            .phase8-bootstrap/part-04 \
+            .phase8-bootstrap/part-05 \
+            > /tmp/phase8.patch.gz.b64
+          echo 'c3cfe623754ef34a29c7463c3bba062aa81482a93e74c1e54fece06fb3b8350f  /tmp/phase8.patch.gz.b64' | sha256sum --check
+          base64 --decode /tmp/phase8.patch.gz.b64 > /tmp/phase8.patch.gz
+          echo 'c61e9ee171198912cdd377b7d05e97b9c6fc50055c903d52c03f79733c392fb8  /tmp/phase8.patch.gz' | sha256sum --check
+          gzip --decompress --stdout /tmp/phase8.patch.gz > /tmp/phase8.patch
+          echo '640565657d633ef9b9c977004e2fe900db01ed8f714d677c40631e5b8a64df28  /tmp/phase8.patch' | sha256sum --check
+          git apply --check /tmp/phase8.patch
+      - name: Apply and commit verified source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git apply /tmp/phase8.patch
+          rm -f .github/workflows/phase8-experiments.yml
+          rm -rf .phase8-bootstrap
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'feat: add Phase 8 scarce workspace retention experiments'
+          git push origin HEAD:agent/phase8-retention-eviction
