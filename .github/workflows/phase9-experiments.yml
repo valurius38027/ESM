@@ -1,8 +1,6 @@
 name: Phase 9 Delayed Utility Experiments
 
 on:
-  pull_request:
-    branches: [agent/phase8-retention-eviction]
   workflow_dispatch:
     inputs:
       steps:
@@ -19,7 +17,6 @@ permissions:
 
 jobs:
   shard:
-    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'agent/phase9-delayed-utility'
     name: Seeds ${{ matrix.shard }}
     runs-on: ubuntu-24.04
     timeout-minutes: 300
