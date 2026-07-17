@@ -1,0 +1,70 @@
+name: Materialize Phase 9 Results
+
+on:
+  pull_request:
+    branches: [agent/phase8-retention-eviction]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: materialize-phase9-results-${{ github.event.pull_request.head.ref }}
+  cancel-in-progress: false
+
+jobs:
+  materialize:
+    if: github.head_ref == 'agent/phase9-delayed-utility'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/phase9-delayed-utility
+          fetch-depth: 0
+      - name: Download and verify formal artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          curl --fail --location \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            https://api.github.com/repos/valurius38027/ESM/actions/artifacts/8401680872/zip \
+            --output /tmp/phase9-results.zip
+          echo 'cc4670690b38396eefb32179d2548798d444d1de726bf51cd31b2c26ac831e59  /tmp/phase9-results.zip' | sha256sum --check
+          rm -rf /tmp/phase9-results
+          mkdir -p /tmp/phase9-results
+          unzip -q /tmp/phase9-results.zip -d /tmp/phase9-results
+          cd /tmp/phase9-results/phase9-formal
+          sha256sum --check SHA256SUMS
+          expected=(
+            SHA256SUMS
+            phase9_runs.csv
+            phase9_causal.csv
+            phase9_summary.csv
+            phase9_paired.csv
+            phase9_causal_comparisons.csv
+            phase9_retention.csv
+            phase9_delay_curves.csv
+            phase9_manifest.json
+          )
+          for file in "${expected[@]}"; do test -f "$file"; done
+          test "$(find . -maxdepth 1 -type f | wc -l)" -eq 9
+      - name: Commit verified consolidated results
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf results/phase9-formal
+          mkdir -p results
+          cp -a /tmp/phase9-results/phase9-formal results/phase9-formal
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -f results/phase9-formal
+          if git diff --cached --quiet; then
+            echo 'No formal result changes to commit.' >&2
+            exit 1
+          fi
+          git commit -m 'results: record Phase 9 formal experiment'
+          git push origin HEAD:agent/phase9-delayed-utility
