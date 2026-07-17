@@ -226,3 +226,76 @@ SGW_TEST(structural_samples_cover_every_binding_position_for_each_entity) {
                             [](bool value) { return value; }));
   }
 }
+
+SGW_TEST(retention_task_encodes_context_six_bindings_and_relevance) {
+  sgw::RetentionTaskConfig task;
+  task.validate();
+  const auto dataset = sgw::make_retention_binding_split(task, 96, 48, 8128);
+  SGW_REQUIRE(dataset.config.sequence_length() == 15);
+  SGW_REQUIRE(dataset.vocabulary.context_count == 3);
+  SGW_REQUIRE(dataset.vocabulary.query_token() == 16);
+  SGW_REQUIRE(dataset.vocabulary.context_token(0) == 17);
+  SGW_REQUIRE(dataset.vocabulary.context_token(2) == 19);
+  SGW_REQUIRE(dataset.vocabulary.size() == 20);
+
+  const auto verify = [&](const sgw::BindingSample& sample, bool holdout) {
+    SGW_REQUIRE(sample.tokens.size() == 15);
+    SGW_REQUIRE(sample.roles.size() == sample.tokens.size());
+    SGW_REQUIRE(sample.roles.front() == sgw::TokenRole::context);
+    SGW_REQUIRE(sample.context_class < task.context_count);
+    SGW_REQUIRE(sample.tokens.front() ==
+                dataset.vocabulary.context_token(sample.context_class));
+    SGW_REQUIRE(sample.binding_relevance.size() == task.binding_count);
+    SGW_REQUIRE(static_cast<std::size_t>(std::count(
+                    sample.binding_relevance.begin(),
+                    sample.binding_relevance.end(), true)) ==
+                task.relevant_binding_count);
+    SGW_REQUIRE(task.is_relevant(sample.context_class, sample.queried_entity));
+    SGW_REQUIRE(sample.tokens[sample.tokens.size() - 2] ==
+                dataset.vocabulary.query_token());
+    SGW_REQUIRE(sample.tokens.back() ==
+                dataset.vocabulary.entity_token(sample.queried_entity));
+    SGW_REQUIRE(sample.query_entity_position + 1 == sample.tokens.size());
+    SGW_REQUIRE(holdout == sgw::is_structural_holdout_pair(
+                               task.binding_config(), sample.queried_entity,
+                               sample.target_class));
+
+    std::set<std::size_t> entities;
+    for (std::size_t binding = 0; binding < task.binding_count; ++binding) {
+      const std::size_t position = 1 + 2 * binding;
+      const auto entity = static_cast<std::size_t>(sample.tokens[position]);
+      const auto value = static_cast<std::size_t>(
+          sample.tokens[position + 1] - static_cast<int>(task.entity_count));
+      SGW_REQUIRE(entities.insert(entity).second);
+      SGW_REQUIRE(sample.roles[position] == sgw::TokenRole::entity);
+      SGW_REQUIRE(sample.roles[position + 1] == sgw::TokenRole::value);
+      SGW_REQUIRE(sample.binding_relevance[binding] ==
+                  task.is_relevant(sample.context_class, entity));
+      if (!holdout || entity != sample.queried_entity) {
+        SGW_REQUIRE(!sgw::is_structural_holdout_pair(
+            task.binding_config(), entity, value));
+      }
+    }
+  };
+  for (const auto& sample : dataset.train) verify(sample, false);
+  for (const auto& sample : dataset.holdout) verify(sample, true);
+}
+
+SGW_TEST(retention_training_stream_is_deterministic_and_nonrepeating) {
+  sgw::RetentionTaskConfig task;
+  sgw::RetentionBindingStream first(task, 9917, 9600);
+  sgw::RetentionBindingStream second(task, 9917, 9600);
+  std::set<std::vector<int>> seen;
+  for (std::size_t index = 0; index < 9600; ++index) {
+    const auto lhs = first.next();
+    const auto rhs = second.next();
+    SGW_REQUIRE(lhs.tokens == rhs.tokens);
+    SGW_REQUIRE(lhs.target_class == rhs.target_class);
+    SGW_REQUIRE(lhs.context_class == rhs.context_class);
+    SGW_REQUIRE(lhs.binding_relevance == rhs.binding_relevance);
+    SGW_REQUIRE(seen.insert(lhs.tokens).second);
+  }
+  SGW_REQUIRE(first.samples_consumed() == 9600);
+  SGW_REQUIRE(first.remaining() == 0);
+  SGW_REQUIRE_THROWS(first.next());
+}

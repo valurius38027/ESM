@@ -17,6 +17,16 @@ enum class KeyValueWriteRoutingMode {
   annealed_learned,
 };
 
+enum class KeyValueRetentionMode {
+  none,
+  full_capacity,
+  oracle,
+  fifo,
+  reservoir,
+  hard_learned,
+  annealed_learned,
+};
+
 struct ModelConfig {
   std::size_t vocab_size{16};
   std::size_t output_classes{4};
@@ -41,11 +51,13 @@ struct ModelConfig {
   KeyValueMediationMode key_value_mode{KeyValueMediationMode::none};
   std::size_t entity_count{0};
   std::size_t value_count{0};
+  std::size_t context_count{0};
   std::size_t key_dim{0};
   std::size_t value_dim{0};
   double key_value_logit_scale{6.0};
   KeyValueWriteRoutingMode key_value_write_routing{
       KeyValueWriteRoutingMode::fixed_position};
+  KeyValueRetentionMode key_value_retention{KeyValueRetentionMode::none};
   double key_value_router_initial_temperature{2.0};
   double key_value_router_final_temperature{0.1};
   std::size_t key_value_router_anneal_steps{600};

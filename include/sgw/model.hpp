@@ -28,6 +28,12 @@ enum class ForwardIntervention {
   randomized_write_slots,
   cleared_writer_assignment,
   allow_write_collisions,
+  zero_query_context,
+  randomized_retention_actions,
+  force_fifo_retention,
+  force_relevant_eviction,
+  permuted_context_labels,
+  disable_retention_skip,
 };
 
 [[nodiscard]] std::string_view forward_intervention_name(
@@ -58,6 +64,18 @@ struct StepTrace {
   double routing_entropy{0.0};
   std::size_t routing_decisions{0};
   std::size_t hard_soft_disagreements{0};
+  std::vector<std::size_t> retention_actions;
+  std::size_t retention_writes{0};
+  std::size_t retention_skips{0};
+  std::size_t retention_evictions{0};
+  std::size_t relevant_writes{0};
+  std::size_t irrelevant_writes{0};
+  std::size_t relevant_evictions{0};
+  std::size_t irrelevant_evictions{0};
+  bool queried_entity_retained{false};
+  bool query_read_hit{false};
+  double retained_age_sum{0.0};
+  std::size_t retained_age_count{0};
 
   [[nodiscard]] bool same_route(const StepTrace& other) const noexcept;
 };
@@ -90,6 +108,10 @@ class SgwEsmModel {
       ForwardIntervention intervention = ForwardIntervention::intact);
 
  private:
+  [[nodiscard]] SequenceResult forward_retention_sequence(
+      ad::Tape& tape, std::span<const int> tokens, bool capture_trace,
+      ForwardIntervention intervention);
+
   [[nodiscard]] SequenceResult forward_key_value_sequence(
       ad::Tape& tape, std::span<const int> tokens, bool capture_trace,
       ForwardIntervention intervention);
@@ -141,6 +163,9 @@ class SgwEsmModel {
   Parameter* kv_entity_codebook_{nullptr};
   Parameter* kv_value_codebook_{nullptr};
   Parameter* kv_slot_codebook_{nullptr};
+  Parameter* kv_context_codebook_{nullptr};
+  Parameter* kv_retention_age_weight_{nullptr};
+  std::uint64_t model_seed_{0};
   std::size_t key_value_routing_step_{0};
 };
 

@@ -320,3 +320,50 @@ SGW_TEST(phase7_write_interventions_are_explicit_and_causally_distinct) {
   }
   SGW_REQUIRE(collision_count >= 1);
 }
+
+SGW_TEST(phase8_retention_interventions_are_explicit_and_change_policy) {
+  const auto config = sgw::make_model_config(
+      sgw::ModelPreset::kv_oracle_retention, 20, 6);
+  sgw::SgwEsmModel model(config, 613);
+  const std::vector<int> tokens{17, 0, 11, 1, 10, 3, 12, 2, 13,
+                                6, 14, 4, 9, 16, 0};
+  const auto action_sequence = [&](sgw::ForwardIntervention intervention) {
+    sgw::ad::Tape tape;
+    const auto result = model.forward_sequence(tape, tokens, true, intervention);
+    std::vector<std::size_t> actions;
+    for (const auto& trace : result.traces) {
+      actions.insert(actions.end(), trace.retention_actions.begin(),
+                     trace.retention_actions.end());
+    }
+    return actions;
+  };
+  const auto intact = action_sequence(sgw::ForwardIntervention::intact);
+  const std::array interventions{
+      sgw::ForwardIntervention::zero_query_context,
+      sgw::ForwardIntervention::randomized_retention_actions,
+      sgw::ForwardIntervention::force_fifo_retention,
+      sgw::ForwardIntervention::force_relevant_eviction,
+      sgw::ForwardIntervention::permuted_context_labels,
+      sgw::ForwardIntervention::disable_retention_skip};
+  for (const auto intervention : interventions) {
+    SGW_REQUIRE(action_sequence(intervention) != intact);
+  }
+  SGW_REQUIRE(sgw::forward_intervention_name(
+                  sgw::ForwardIntervention::zero_query_context) ==
+              std::string_view("zero_query_context"));
+  SGW_REQUIRE(sgw::forward_intervention_name(
+                  sgw::ForwardIntervention::randomized_retention_actions) ==
+              std::string_view("randomized_retention_actions"));
+  SGW_REQUIRE(sgw::forward_intervention_name(
+                  sgw::ForwardIntervention::force_fifo_retention) ==
+              std::string_view("force_fifo_retention"));
+  SGW_REQUIRE(sgw::forward_intervention_name(
+                  sgw::ForwardIntervention::force_relevant_eviction) ==
+              std::string_view("force_relevant_eviction"));
+  SGW_REQUIRE(sgw::forward_intervention_name(
+                  sgw::ForwardIntervention::permuted_context_labels) ==
+              std::string_view("permuted_context_labels"));
+  SGW_REQUIRE(sgw::forward_intervention_name(
+                  sgw::ForwardIntervention::disable_retention_skip) ==
+              std::string_view("disable_retention_skip"));
+}

@@ -171,3 +171,38 @@ SGW_TEST(annealed_slot_router_receives_gradient_before_hard_only_window) {
   }
   SGW_REQUIRE(router_gradient > 1.0e-12);
 }
+
+SGW_TEST(annealed_retention_router_receives_gradient_before_hard_only_window) {
+  sgw::RetentionTaskConfig task;
+  const auto dataset = sgw::make_retention_binding_split(task, 24, 8, 828);
+  const auto config = sgw::make_model_config(
+      sgw::ModelPreset::kv_annealed_retention,
+      dataset.vocabulary.size(), task.value_count);
+  sgw::SgwEsmModel model(config, 317);
+
+  const auto retention_gradient = [&](std::size_t step) {
+    model.set_key_value_routing_step(step);
+    model.parameters().zero_grad();
+    for (std::size_t sample_index = 0; sample_index < 8; ++sample_index) {
+      sgw::ad::Tape tape;
+      const auto result = model.forward_sequence(
+          tape, dataset.train[sample_index].tokens, true);
+      const auto loss = sgw::cross_entropy_loss(
+          tape, result.logits, dataset.train[sample_index].target_class);
+      tape.backward(loss);
+    }
+    double total = 0.0;
+    for (const auto& parameter : model.parameters().parameters()) {
+      if (parameter->name() == "kv_context_codebook" ||
+          parameter->name() == "kv_retention_age_weight") {
+        for (const double value : parameter->gradients()) {
+          total += std::abs(value);
+        }
+      }
+    }
+    return total;
+  };
+
+  SGW_REQUIRE(retention_gradient(0) > 1.0e-12);
+  SGW_REQUIRE_NEAR(retention_gradient(900), 0.0, 1.0e-15);
+}

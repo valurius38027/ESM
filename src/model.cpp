@@ -150,6 +150,18 @@ std::string_view forward_intervention_name(
       return "cleared_writer_assignment";
     case ForwardIntervention::allow_write_collisions:
       return "allow_write_collisions";
+    case ForwardIntervention::zero_query_context:
+      return "zero_query_context";
+    case ForwardIntervention::randomized_retention_actions:
+      return "randomized_retention_actions";
+    case ForwardIntervention::force_fifo_retention:
+      return "force_fifo_retention";
+    case ForwardIntervention::force_relevant_eviction:
+      return "force_relevant_eviction";
+    case ForwardIntervention::permuted_context_labels:
+      return "permuted_context_labels";
+    case ForwardIntervention::disable_retention_skip:
+      return "disable_retention_skip";
   }
   return "unknown";
 }
@@ -157,7 +169,8 @@ std::string_view forward_intervention_name(
 bool StepTrace::same_route(const StepTrace& other) const noexcept {
   return active_mechanisms == other.active_mechanisms &&
          writers == other.writers && writer_slots == other.writer_slots &&
-         recipients == other.recipients;
+         recipients == other.recipients &&
+         retention_actions == other.retention_actions;
 }
 
 std::size_t estimated_step_madds(const ModelConfig& config) {
@@ -177,6 +190,10 @@ std::size_t estimated_step_madds(const ModelConfig& config) {
   }
   if (config.key_value_mode == KeyValueMediationMode::learned_tied) {
     std::size_t total = b * config.key_dim + c * config.value_dim;
+    if (config.key_value_retention == KeyValueRetentionMode::hard_learned ||
+        config.key_value_retention == KeyValueRetentionMode::annealed_learned) {
+      total += (b + 1) * config.key_dim + b;
+    }
     if (config.key_value_write_routing ==
             KeyValueWriteRoutingMode::hard_learned ||
         config.key_value_write_routing ==
@@ -226,7 +243,7 @@ std::size_t estimated_step_madds(const ModelConfig& config) {
 }
 
 SgwEsmModel::SgwEsmModel(ModelConfig config, std::uint64_t seed)
-    : config_(config) {
+    : config_(config), model_seed_(seed) {
   config_.validate();
   std::mt19937_64 generator(seed);
   const std::size_t e = config_.embedding_dim;
@@ -252,6 +269,16 @@ SgwEsmModel::SgwEsmModel(ModelConfig config, std::uint64_t seed)
         kv_slot_codebook_ = &parameters_.add_xavier(
             "kv_slot_codebook", config_.workspace_slots, config_.key_dim,
             generator);
+      }
+      if (config_.key_value_retention ==
+              KeyValueRetentionMode::hard_learned ||
+          config_.key_value_retention ==
+              KeyValueRetentionMode::annealed_learned) {
+        kv_context_codebook_ = &parameters_.add_xavier(
+            "kv_context_codebook", config_.context_count, config_.key_dim,
+            generator);
+        kv_retention_age_weight_ = &parameters_.add_zeros(
+            "kv_retention_age_weight", 1, 1);
       }
     }
     return;
@@ -358,8 +385,12 @@ std::size_t SgwEsmModel::key_value_routing_step() const noexcept {
 }
 
 double SgwEsmModel::key_value_router_temperature() const noexcept {
-  if (config_.key_value_write_routing !=
+  const bool annealed =
+      config_.key_value_write_routing ==
           KeyValueWriteRoutingMode::annealed_learned ||
+      config_.key_value_retention ==
+          KeyValueRetentionMode::annealed_learned;
+  if (!annealed ||
       key_value_routing_step_ >= config_.key_value_router_anneal_steps) {
     return config_.key_value_router_final_temperature;
   }
@@ -374,9 +405,439 @@ double SgwEsmModel::key_value_router_temperature() const noexcept {
 }
 
 bool SgwEsmModel::key_value_router_uses_surrogate() const noexcept {
-  return config_.key_value_write_routing ==
-             KeyValueWriteRoutingMode::annealed_learned &&
+  return (config_.key_value_write_routing ==
+              KeyValueWriteRoutingMode::annealed_learned ||
+          config_.key_value_retention ==
+              KeyValueRetentionMode::annealed_learned) &&
          key_value_routing_step_ < config_.key_value_router_anneal_steps;
+}
+
+
+SequenceResult SgwEsmModel::forward_retention_sequence(
+    ad::Tape& tape, std::span<const int> tokens, bool capture_trace,
+    ForwardIntervention intervention) {
+  const std::size_t bindings = config_.mediation_binding_count;
+  const std::size_t expected_length = 2 * bindings + 3;
+  if (tokens.size() != expected_length) {
+    throw std::invalid_argument(
+        "retention mediation requires context, six bindings, and query");
+  }
+  for (const int token : tokens) {
+    if (token < 0 || static_cast<std::size_t>(token) >= config_.vocab_size) {
+      throw std::out_of_range("input token out of vocabulary range");
+    }
+  }
+
+  const std::size_t b = config_.workspace_slots;
+  const std::size_t w = config_.workspace_dim;
+  const std::size_t key_dim = config_.key_dim;
+  const std::size_t value_dim = config_.value_dim;
+  const std::size_t reader = bindings;
+  const std::size_t missing = config_.vocab_size;
+  const std::size_t context_start = config_.vocab_size - config_.context_count;
+  const std::size_t context_token = static_cast<std::size_t>(tokens.front());
+  if (context_token < context_start || context_token >= config_.vocab_size) {
+    throw std::invalid_argument("retention sequence has invalid context token");
+  }
+  const std::size_t context = context_token - context_start;
+  const bool zero_policy_context =
+      intervention == ForwardIntervention::zero_query_context;
+  const std::size_t policy_context =
+      intervention == ForwardIntervention::permuted_context_labels
+          ? (context + 1) % config_.context_count
+          : context;
+  const bool writes_enabled =
+      intervention != ForwardIntervention::no_workspace_writes;
+  const bool persists =
+      intervention != ForwardIntervention::no_workspace_persistence;
+  const bool output_enabled =
+      intervention != ForwardIntervention::no_broadcast &&
+      intervention != ForwardIntervention::zero_reader_inbox &&
+      intervention != ForwardIntervention::workspace_disconnected &&
+      intervention != ForwardIntervention::no_workspace_output &&
+      intervention != ForwardIntervention::no_mechanism_output;
+
+  ModelState state;
+  state.spine = zero_vector(tape, config_.spine_dim);
+  state.mechanisms =
+      zero_vector(tape, config_.mechanism_count * config_.mechanism_dim);
+  state.workspace = zero_vector(tape, b * w);
+  state.inboxes = zero_vector(tape, config_.mechanism_count * w);
+  state.active_summary = zero_vector(tape, value_dim);
+  std::vector<std::size_t> slot_entities(b, missing);
+  std::vector<std::size_t> slot_values(b, missing);
+  std::vector<std::size_t> slot_ages(b, 0);
+  std::vector<bool> occupied(b, false);
+  std::vector<std::size_t> binding_actions(bindings, 0);
+  std::vector<std::vector<ad::Var>> binding_action_gates(bindings);
+  std::vector<StepTrace> traces;
+  if (capture_trace) traces.reserve(tokens.size());
+
+  const auto normalize = [&](std::span<const ad::Var> input) {
+    ad::Var sum_squares = tape.constant(1.0e-12);
+    for (const ad::Var value : input) sum_squares = sum_squares + value * value;
+    const ad::Var norm = ad::exp(tape.constant(0.5) * ad::log(sum_squares));
+    std::vector<ad::Var> result;
+    result.reserve(input.size());
+    for (const ad::Var value : input) result.push_back(value / norm);
+    return result;
+  };
+  const auto parameter_row = [&](Parameter& parameter, std::size_t row) {
+    std::vector<ad::Var> values;
+    values.reserve(parameter.columns());
+    for (std::size_t column = 0; column < parameter.columns(); ++column) {
+      values.push_back(matrix_entry(tape, parameter, row, column));
+    }
+    return values;
+  };
+  const auto dot = [&](std::span<const ad::Var> lhs,
+                       std::span<const ad::Var> rhs) {
+    if (lhs.size() != rhs.size()) {
+      throw std::logic_error("retention dot shape mismatch");
+    }
+    ad::Var result = tape.constant(0.0);
+    for (std::size_t index = 0; index < lhs.size(); ++index) {
+      result = result + lhs[index] * rhs[index];
+    }
+    return result;
+  };
+  const auto hard_action_gates = [&](std::size_t selected) {
+    std::vector<ad::Var> gates;
+    gates.reserve(b + 1);
+    for (std::size_t action = 0; action <= b; ++action) {
+      gates.push_back(tape.constant(action == selected ? 1.0 : 0.0));
+    }
+    return gates;
+  };
+  const auto first_free_slot = [&]() {
+    for (std::size_t slot = 0; slot < b; ++slot) {
+      if (!occupied[slot]) return slot;
+    }
+    return b;
+  };
+  const auto oldest_slot = [&]() {
+    std::size_t selected = 0;
+    for (std::size_t slot = 1; slot < b; ++slot) {
+      if (slot_ages[slot] > slot_ages[selected]) selected = slot;
+    }
+    return selected;
+  };
+  const auto relevant = [&](std::size_t entity) {
+    return entity % config_.context_count == context;
+  };
+  const auto policy_relevant = [&](std::size_t entity) {
+    return !zero_policy_context &&
+           entity % config_.context_count == policy_context;
+  };
+  const auto mix_hash = [&](std::uint64_t value) {
+    value ^= value >> 30;
+    value *= 0xbf58476d1ce4e5b9ULL;
+    value ^= value >> 27;
+    value *= 0x94d049bb133111ebULL;
+    return value ^ (value >> 31);
+  };
+
+  struct RetentionDecision {
+    std::size_t action{0};
+    std::vector<ad::Var> gates;
+    double entropy{0.0};
+    std::size_t disagreements{0};
+  };
+
+  const auto choose_action = [&](std::size_t binding,
+                                 std::size_t entity) {
+    RetentionDecision decision;
+    const std::size_t free_slot = first_free_slot();
+    switch (config_.key_value_retention) {
+      case KeyValueRetentionMode::full_capacity:
+        if (free_slot >= b) {
+          throw std::logic_error("full-capacity retention exhausted slots");
+        }
+        decision.action = free_slot + 1;
+        break;
+      case KeyValueRetentionMode::oracle:
+        decision.action = policy_relevant(entity)
+            ? (free_slot < b ? free_slot : oldest_slot()) + 1
+            : 0;
+        break;
+      case KeyValueRetentionMode::fifo:
+        decision.action = (free_slot < b ? free_slot : oldest_slot()) + 1;
+        break;
+      case KeyValueRetentionMode::reservoir: {
+        if (binding < b) {
+          decision.action = first_free_slot() + 1;
+        } else {
+          const std::uint64_t key = model_seed_ ^
+              (static_cast<std::uint64_t>(context) << 48) ^
+              (static_cast<std::uint64_t>(entity) << 24) ^
+              static_cast<std::uint64_t>(binding);
+          const std::size_t draw = static_cast<std::size_t>(
+              mix_hash(key) % static_cast<std::uint64_t>(binding + 1));
+          decision.action = draw < b ? draw + 1 : 0;
+        }
+        break;
+      }
+      case KeyValueRetentionMode::hard_learned:
+      case KeyValueRetentionMode::annealed_learned: {
+        const auto context_code = zero_policy_context
+            ? zero_vector(tape, key_dim)
+            : normalize(parameter_row(*kv_context_codebook_, policy_context));
+        const auto incoming = normalize(
+            parameter_row(*kv_entity_codebook_, entity));
+        const ad::Var incoming_relevance = dot(context_code, incoming);
+        std::vector<ad::Var> scores;
+        scores.reserve(b + 1);
+        scores.push_back(-incoming_relevance);
+        const ad::Var age_weight = matrix_entry(
+            tape, *kv_retention_age_weight_, 0, 0);
+        for (std::size_t slot = 0; slot < b; ++slot) {
+          ad::Var stored_relevance = tape.constant(-1.0);
+          if (occupied[slot]) {
+            std::vector<ad::Var> slot_key;
+            slot_key.reserve(key_dim);
+            for (std::size_t component = 0; component < key_dim; ++component) {
+              slot_key.push_back(state.workspace[slot * w + component]);
+            }
+            stored_relevance = dot(context_code, normalize(slot_key));
+          }
+          const double age = static_cast<double>(slot_ages[slot]) /
+              static_cast<double>(bindings);
+          scores.push_back(incoming_relevance - stored_relevance +
+                           age_weight * tape.constant(age));
+        }
+        decision.action = select_vars(scores, 1).front();
+        decision.gates = hard_action_gates(decision.action);
+        const double temperature = key_value_router_temperature();
+        double maximum = scores.front().value() / temperature;
+        for (const ad::Var score : scores) {
+          maximum = std::max(maximum, score.value() / temperature);
+        }
+        const ad::Var maximum_constant = tape.constant(maximum);
+        ad::Var denominator = tape.constant(0.0);
+        std::vector<ad::Var> probabilities;
+        probabilities.reserve(scores.size());
+        for (const ad::Var score : scores) {
+          const ad::Var numerator = ad::exp(
+              score / tape.constant(temperature) - maximum_constant);
+          probabilities.push_back(numerator);
+          denominator = denominator + numerator;
+        }
+        for (std::size_t action = 0; action < probabilities.size(); ++action) {
+          probabilities[action] = probabilities[action] / denominator;
+          const double numeric = probabilities[action].value();
+          if (numeric > 0.0) decision.entropy -= numeric * std::log(numeric);
+          if (key_value_router_uses_surrogate()) {
+            decision.gates[action] = decision.gates[action] +
+                probabilities[action] - tape.constant(numeric);
+          }
+        }
+        break;
+      }
+      case KeyValueRetentionMode::none:
+        throw std::logic_error("retention forward called without policy");
+    }
+    if (intervention == ForwardIntervention::force_fifo_retention) {
+      decision.action = (free_slot < b ? free_slot : oldest_slot()) + 1;
+      decision.gates = hard_action_gates(decision.action);
+    } else if (intervention ==
+               ForwardIntervention::force_relevant_eviction) {
+      for (std::size_t slot = 0; slot < b; ++slot) {
+        if (occupied[slot] && relevant(slot_entities[slot])) {
+          decision.action = slot + 1;
+          decision.gates = hard_action_gates(decision.action);
+          break;
+        }
+      }
+    }
+    if (intervention == ForwardIntervention::disable_retention_skip &&
+        decision.action == 0) {
+      decision.action = (free_slot < b ? free_slot : oldest_slot()) + 1;
+      decision.gates = hard_action_gates(decision.action);
+    }
+    if (intervention ==
+        ForwardIntervention::randomized_retention_actions) {
+      decision.action = (decision.action + 1) % (b + 1);
+      decision.gates = hard_action_gates(decision.action);
+    } else if (intervention == ForwardIntervention::randomized_write_slots &&
+               decision.action != 0) {
+      decision.action = 1 + (decision.action % b);
+      decision.gates = hard_action_gates(decision.action);
+    }
+    if (decision.gates.empty()) decision.gates = hard_action_gates(decision.action);
+    return decision;
+  };
+
+  for (std::size_t step = 0; step < tokens.size(); ++step) {
+    if (!persists) {
+      state.workspace = zero_vector(tape, b * w);
+      std::fill(slot_entities.begin(), slot_entities.end(), missing);
+      std::fill(slot_values.begin(), slot_values.end(), missing);
+      std::fill(slot_ages.begin(), slot_ages.end(), 0);
+      std::fill(occupied.begin(), occupied.end(), false);
+    }
+    StepTrace trace;
+    if (capture_trace) {
+      trace.mechanism_state_before = snapshot(state.mechanisms);
+      trace.inbox_before = snapshot(state.inboxes);
+      trace.workspace_before = snapshot(state.workspace);
+      trace.estimated_madds = estimated_step_madds(config_);
+    }
+    const bool body = step >= 1 && step < 1 + 2 * bindings;
+    const std::size_t mechanism = body ? (step - 1) / 2 : reader;
+    trace.active_mechanisms.push_back(mechanism);
+    trace.recipients.push_back(reader);
+
+    if (body) {
+      const std::size_t binding = (step - 1) / 2;
+      const std::size_t token = static_cast<std::size_t>(tokens[step]);
+      if ((step - 1) % 2 == 0) {
+        if (token >= config_.entity_count) {
+          throw std::invalid_argument("retention entity token out of range");
+        }
+        for (std::size_t slot = 0; slot < b; ++slot) {
+          if (occupied[slot]) ++slot_ages[slot];
+        }
+        RetentionDecision decision = choose_action(binding, token);
+        binding_actions[binding] = decision.action;
+        binding_action_gates[binding] = std::move(decision.gates);
+        trace.retention_actions.push_back(decision.action);
+        trace.routing_entropy += decision.entropy;
+        trace.routing_decisions += 1;
+        trace.hard_soft_disagreements += decision.disagreements;
+        if (decision.action == 0) {
+          trace.retention_skips = 1;
+        } else {
+          const std::size_t slot = decision.action - 1;
+          trace.retention_writes = 1;
+          trace.writers.push_back(mechanism);
+          trace.writer_slots.push_back(slot);
+          const bool incoming_relevant = relevant(token);
+          trace.relevant_writes = incoming_relevant ? 1 : 0;
+          trace.irrelevant_writes = incoming_relevant ? 0 : 1;
+          if (occupied[slot]) {
+            trace.retention_evictions = 1;
+            const bool evicted_relevant = relevant(slot_entities[slot]);
+            trace.relevant_evictions = evicted_relevant ? 1 : 0;
+            trace.irrelevant_evictions = evicted_relevant ? 0 : 1;
+          }
+          if (writes_enabled) {
+            occupied[slot] = true;
+            slot_entities[slot] = token;
+            slot_values[slot] = missing;
+            slot_ages[slot] = 0;
+          }
+        }
+        const auto key = normalize(parameter_row(*kv_entity_codebook_, token));
+        if (writes_enabled) {
+          for (std::size_t slot = 0; slot < b; ++slot) {
+            const ad::Var gate = binding_action_gates[binding][slot + 1];
+            for (std::size_t component = 0; component < key_dim; ++component) {
+              const std::size_t offset = slot * w + component;
+              state.workspace[offset] =
+                  (tape.constant(1.0) - gate) * state.workspace[offset] +
+                  gate * key[component];
+            }
+          }
+        }
+      } else {
+        std::size_t action = binding_actions[binding];
+        if (intervention == ForwardIntervention::cleared_writer_assignment) {
+          action = 0;
+        }
+        if (token < config_.entity_count ||
+            token >= config_.entity_count + config_.value_count) {
+          throw std::invalid_argument("retention value token out of range");
+        }
+        const std::size_t value_class = token - config_.entity_count;
+        if (action != 0) {
+          trace.writers.push_back(mechanism);
+          trace.writer_slots.push_back(action - 1);
+        }
+        if (writes_enabled && action != 0) {
+          slot_values[action - 1] = value_class;
+        }
+        const auto value = normalize(
+            parameter_row(*kv_value_codebook_, value_class));
+        if (writes_enabled) {
+          for (std::size_t slot = 0; slot < b; ++slot) {
+            const ad::Var gate = binding_action_gates[binding][slot + 1];
+            for (std::size_t component = 0; component < value_dim; ++component) {
+              const std::size_t offset = slot * w + key_dim + component;
+              state.workspace[offset] =
+                  (tape.constant(1.0) - gate) * state.workspace[offset] +
+                  gate * value[component];
+            }
+          }
+        }
+      }
+    }
+
+    if (step + 1 == tokens.size()) {
+      const std::size_t query = static_cast<std::size_t>(tokens[step]);
+      if (query >= config_.entity_count) {
+        throw std::invalid_argument("retention query token out of range");
+      }
+      std::vector<ad::Var> query_key;
+      if (intervention == ForwardIntervention::zero_query_key) {
+        query_key = zero_vector(tape, key_dim);
+      } else {
+        query_key = normalize(parameter_row(*kv_entity_codebook_, query));
+      }
+      std::vector<ad::Var> scores;
+      scores.reserve(b);
+      for (std::size_t slot = 0; slot < b; ++slot) {
+        const std::size_t key_slot =
+            intervention == ForwardIntervention::permuted_workspace_keys
+                ? (slot + 1) % b
+                : slot;
+        std::vector<ad::Var> slot_key;
+        slot_key.reserve(key_dim);
+        for (std::size_t component = 0; component < key_dim; ++component) {
+          slot_key.push_back(state.workspace[key_slot * w + component]);
+        }
+        scores.push_back(dot(query_key, slot_key));
+      }
+      const std::size_t selected_slot = select_vars(scores, 1).front();
+      trace.read_slots.push_back(selected_slot);
+      trace.queried_entity_retained = std::find(
+          slot_entities.begin(), slot_entities.end(), query) !=
+          slot_entities.end();
+      trace.query_read_hit = trace.queried_entity_retained &&
+          slot_entities[selected_slot] == query;
+      for (std::size_t slot = 0; slot < b; ++slot) {
+        if (occupied[slot]) {
+          trace.retained_age_sum += static_cast<double>(slot_ages[slot]);
+          ++trace.retained_age_count;
+        }
+      }
+      std::vector<ad::Var> retrieved;
+      retrieved.reserve(value_dim);
+      for (std::size_t component = 0; component < value_dim; ++component) {
+        retrieved.push_back(output_enabled
+            ? state.workspace[selected_slot * w + key_dim + component]
+            : tape.constant(0.0));
+      }
+      state.active_summary = retrieved;
+    }
+
+    if (capture_trace) {
+      trace.mechanism_state_after = snapshot(state.mechanisms);
+      trace.inbox_after = snapshot(state.inboxes);
+      trace.workspace_after = snapshot(state.workspace);
+      traces.push_back(std::move(trace));
+    }
+  }
+
+  const auto retrieved = normalize(state.active_summary);
+  std::vector<ad::Var> logits;
+  logits.reserve(config_.output_classes);
+  for (std::size_t output = 0; output < config_.output_classes; ++output) {
+    const auto code = normalize(parameter_row(*kv_value_codebook_, output));
+    logits.push_back(tape.constant(config_.key_value_logit_scale) *
+                     dot(retrieved, code));
+  }
+  return SequenceResult{std::move(logits), {}, std::move(state),
+                        std::move(traces)};
 }
 
 SequenceResult SgwEsmModel::forward_key_value_sequence(
@@ -753,6 +1214,10 @@ SequenceResult SgwEsmModel::forward_sequence(
     ForwardIntervention intervention) {
   if (tokens.empty()) {
     throw std::invalid_argument("input sequence must not be empty");
+  }
+  if (config_.key_value_retention != KeyValueRetentionMode::none) {
+    return forward_retention_sequence(tape, tokens, capture_trace,
+                                      intervention);
   }
   if (config_.key_value_mode != KeyValueMediationMode::none) {
     return forward_key_value_sequence(tape, tokens, capture_trace, intervention);

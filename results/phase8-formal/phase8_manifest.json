@@ -1,0 +1,47 @@
+{
+  "analysis_seed": 20260716,
+  "annealed_accuracy_gate_pass": true,
+  "annealed_vs_fifo_gate_pass": true,
+  "annealed_vs_reservoir_gate_pass": true,
+  "bootstrap_replicates": 50000,
+  "causal_gate_pass": true,
+  "causal_rows": 300,
+  "conditions": [
+    "kv_full_capacity",
+    "kv_oracle_retention",
+    "kv_fifo_eviction",
+    "kv_reservoir",
+    "kv_hard_retention",
+    "kv_annealed_retention"
+  ],
+  "formal_causal_interventions": [
+    "zero_query_context",
+    "randomized_retention_actions",
+    "force_relevant_eviction",
+    "permuted_context_labels",
+    "disable_retention_skip",
+    "no_workspace_writes",
+    "no_workspace_persistence",
+    "no_mechanism_output"
+  ],
+  "formal_run": true,
+  "hard_only_window_gate_pass": true,
+  "interventions": [
+    "intact",
+    "zero_query_context",
+    "randomized_retention_actions",
+    "force_fifo_retention",
+    "force_relevant_eviction",
+    "permuted_context_labels",
+    "disable_retention_skip",
+    "no_workspace_writes",
+    "no_workspace_persistence",
+    "no_mechanism_output"
+  ],
+  "oracle_capacity_gate_pass": true,
+  "overall_gate_pass": true,
+  "retention_quality_gate_pass": true,
+  "run_rows": 180,
+  "seed_count": 30,
+  "seed_start": 0
+}

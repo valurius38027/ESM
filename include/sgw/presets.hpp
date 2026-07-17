@@ -28,6 +28,12 @@ enum class ExperimentCondition {
   kv_first_free,
   kv_hard_router,
   kv_annealed_router,
+  kv_full_capacity,
+  kv_oracle_retention,
+  kv_fifo_eviction,
+  kv_reservoir,
+  kv_hard_retention,
+  kv_annealed_retention,
 };
 
 enum class ModelPreset {
@@ -49,6 +55,12 @@ enum class ModelPreset {
   kv_first_free,
   kv_hard_router,
   kv_annealed_router,
+  kv_full_capacity,
+  kv_oracle_retention,
+  kv_fifo_eviction,
+  kv_reservoir,
+  kv_hard_retention,
+  kv_annealed_retention,
   sgw = sgw_redundant,
 };
 

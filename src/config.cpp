@@ -88,9 +88,37 @@ void ModelConfig::validate() const {
       throw std::invalid_argument(
           "key-value workspace dimension must equal key_dim + value_dim");
     }
-    if (workspace_slots != mediation_binding_count) {
-      throw std::invalid_argument(
-          "key-value mediation requires one slot per binding");
+    if (key_value_retention == KeyValueRetentionMode::none) {
+      if (workspace_slots != mediation_binding_count) {
+        throw std::invalid_argument(
+            "key-value mediation requires one slot per binding");
+      }
+    } else {
+      require_positive(context_count, "context_count");
+      if (mediation_binding_count != 6) {
+        throw std::invalid_argument(
+            "retention experiments require six bindings");
+      }
+      if (key_value_retention == KeyValueRetentionMode::full_capacity) {
+        if (workspace_slots != mediation_binding_count) {
+          throw std::invalid_argument(
+              "full-capacity retention requires one slot per binding");
+        }
+      } else if (workspace_slots != 3) {
+        throw std::invalid_argument(
+            "scarce retention experiments require three slots");
+      }
+      if ((key_value_retention == KeyValueRetentionMode::hard_learned ||
+           key_value_retention == KeyValueRetentionMode::annealed_learned) &&
+          key_value_mode != KeyValueMediationMode::learned_tied) {
+        throw std::invalid_argument(
+            "learned retention requires learned tied key-value mediation");
+      }
+      if (key_value_retention == KeyValueRetentionMode::annealed_learned &&
+          key_value_router_anneal_steps == 0) {
+        throw std::invalid_argument(
+            "annealed retention requires positive anneal steps");
+      }
     }
     if (mechanism_count < mediation_binding_count + 1) {
       throw std::invalid_argument(
@@ -106,7 +134,9 @@ void ModelConfig::validate() const {
       throw std::invalid_argument(
           "key-value mediation requires the sparse retrieved-value path to be the only content path");
     }
-    if (vocab_size < entity_count + value_count + 1) {
+    const std::size_t required_vocab = entity_count + value_count + 1 +
+        (key_value_retention == KeyValueRetentionMode::none ? 0 : context_count);
+    if (vocab_size < required_vocab) {
       throw std::invalid_argument(
           "key-value vocabulary does not contain all entity and value tokens");
     }
