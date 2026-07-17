@@ -1,8 +1,6 @@
 name: Phase 8 Scarce Workspace Retention Experiments
 
 on:
-  pull_request:
-    branches: [agent/phase7-learned-slot-routing]
   workflow_dispatch:
     inputs:
       steps:
@@ -19,7 +17,6 @@ permissions:
 
 jobs:
   shard:
-    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'agent/phase8-retention-eviction'
     name: Seeds ${{ matrix.shard }}
     runs-on: ubuntu-24.04
     timeout-minutes: 240
