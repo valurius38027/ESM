@@ -1,0 +1,1 @@
+Only manifest.json and part-00..03.b64 are covered by SHA256SUMS. Additional bootstrap notes are intentionally outside the transport payload and are removed before source commit.
