@@ -1,0 +1,33 @@
+{
+  "base64_sha256": "fde68c5365d08859c076ad164d523c8f3e31f2f785c808867aa5fcc86113a8c8",
+  "base_branch": "agent/phase9-delayed-utility",
+  "base_commit": "30858cffcb2c3df6b57600d982d68fcad68e747e",
+  "format_version": 1,
+  "gzip_sha256": "e74bf99b1a4322df46a3e19a083c7e298332d11a86ad797563fca062036c0914",
+  "parts": [
+    {
+      "bytes": 5200,
+      "name": "part-00.b64",
+      "sha256": "5dda143356d75c7bc958f9fed0d6881e7982edbe02082edacc7cf6dc73fd7649"
+    },
+    {
+      "bytes": 5200,
+      "name": "part-01.b64",
+      "sha256": "3e0af4dfc67da484d36a93cd9e5ddeb1e0602befba748f32d39b8dea29657fe8"
+    },
+    {
+      "bytes": 5200,
+      "name": "part-02.b64",
+      "sha256": "0d8705c9f1c4dcdf7222f498c5e042f218d98f592b9b43745c1c6ecd19c8289f"
+    },
+    {
+      "bytes": 5164,
+      "name": "part-03.b64",
+      "sha256": "e0877fc6f04966705d6c3b20cc6c7a528752b389ea4ac633c024c8e4d408f874"
+    }
+  ],
+  "patch_sha256": "7433c0d94bf738013cff9bb799d59f76b1f77c6f935429d425b153b67d17e6ae",
+  "target_branch": "agent/gwv1-phase25-micro-lm",
+  "target_workflow": "lm-micro-smoke.yml",
+  "transport": "gzip-base64"
+}
