@@ -1,1 +1,0 @@
-Temporary bootstrap branch. Do not merge. Opening a draft pull request against `agent/phase9-delayed-utility` triggers the verified one-time materializer, which self-deletes and explicitly dispatches the Phase 25 micro language-model smoke workflow.

@@ -1,1 +1,0 @@
-This temporary directory is removed by the materializer. It is never part of the materialized source commit.
