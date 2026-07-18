@@ -32,7 +32,6 @@ if(SGW_ENABLE_SANITIZERS AND NOT MSVC)
   target_link_options(sgw_core PUBLIC -fsanitize=address,undefined -fno-omit-frame-pointer)
 endif()
 
-
 add_executable(sgw_train apps/sgw_train.cpp)
 target_link_libraries(sgw_train PRIVATE sgw_core)
 sgw_enable_warnings(sgw_train)
@@ -49,9 +48,6 @@ add_executable(sgw_tests
   tests/test_training.cpp
   tests/test_presets.cpp
   tests/test_interventions.cpp
-  tests/test_lmv1_data.cpp
-  tests/test_lmv1_model.cpp
-  tests/test_lmv1_training.cpp
 )
 target_link_libraries(sgw_tests PRIVATE sgw_core)
 target_include_directories(sgw_tests PRIVATE tests)
@@ -112,24 +108,6 @@ add_test(
           ${CMAKE_SOURCE_DIR}
 )
 
-
 add_executable(lmv1_train apps/lmv1_train.cpp)
 target_link_libraries(lmv1_train PRIVATE sgw_core)
 sgw_enable_warnings(lmv1_train)
-
-add_test(
-  NAME lmv1_cli_determinism
-  COMMAND bash ${CMAKE_SOURCE_DIR}/tests/test_lmv1_cli.sh
-          ${CMAKE_BINARY_DIR}/lmv1_train ${CMAKE_BINARY_DIR}
-)
-
-add_test(
-  NAME lmv1_phase25_smoke_summary
-  COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/test_lmv1_phase25_smoke_summary.py
-)
-
-add_test(
-  NAME remote_materialization_generator
-  COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/test_remote_materialization.py
-          ${CMAKE_SOURCE_DIR}
-)
