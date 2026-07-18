@@ -4,12 +4,15 @@ on:
   workflow_dispatch:
   push:
     branches: [agent/gwv1-phase25-micro-lm]
+  pull_request:
+    branches: [agent/phase9-delayed-utility]
 
 permissions:
   contents: read
 
 jobs:
   corpus:
+    if: github.event_name != 'pull_request' || github.head_ref == 'agent/gwv1-phase25-micro-lm'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -23,6 +26,7 @@ jobs:
           retention-days: 7
 
   train:
+    if: github.event_name != 'pull_request' || github.head_ref == 'agent/gwv1-phase25-micro-lm'
     needs: corpus
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -58,6 +62,7 @@ jobs:
           retention-days: 14
 
   aggregate:
+    if: github.event_name != 'pull_request' || github.head_ref == 'agent/gwv1-phase25-micro-lm'
     needs: train
     runs-on: ubuntu-latest
     timeout-minutes: 5
