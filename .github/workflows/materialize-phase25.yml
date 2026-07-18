@@ -1,0 +1,74 @@
+name: Materialize Phase 25 Runtime
+
+on:
+  pull_request:
+    branches: [agent/phase9-delayed-utility]
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: materialize-phase25-${{ github.event.pull_request.head.ref }}
+  cancel-in-progress: false
+
+jobs:
+  materialize:
+    if: >-
+      github.head_ref == 'agent/gwv1-phase25-micro-lm' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/gwv1-phase25-micro-lm
+          fetch-depth: 0
+
+      - name: Reassemble and verify runtime patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd .phase25-bootstrap && sha256sum --check SHA256SUMS)
+          cat \
+            .phase25-bootstrap/part-00.b64 \
+            .phase25-bootstrap/part-01.b64 \
+            .phase25-bootstrap/part-02.b64 \
+            .phase25-bootstrap/part-03.b64 \
+            > /tmp/phase25.patch.gz.b64
+          echo 'fde68c5365d08859c076ad164d523c8f3e31f2f785c808867aa5fcc86113a8c8  /tmp/phase25.patch.gz.b64' | sha256sum --check
+          base64 --decode /tmp/phase25.patch.gz.b64 > /tmp/phase25.patch.gz
+          echo 'e74bf99b1a4322df46a3e19a083c7e298332d11a86ad797563fca062036c0914  /tmp/phase25.patch.gz' | sha256sum --check
+          gzip --decompress --stdout /tmp/phase25.patch.gz > /tmp/phase25.patch
+          echo '7433c0d94bf738013cff9bb799d59f76b1f77c6f935429d425b153b67d17e6ae  /tmp/phase25.patch' | sha256sum --check
+          git apply --check /tmp/phase25.patch
+
+      - name: Apply, self-delete, commit, and push
+        shell: bash
+        run: |
+          set -euo pipefail
+          git apply /tmp/phase25.patch
+          rm -rf .phase25-bootstrap
+          rm -f .github/workflows/materialize-phase25.yml
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'feat: materialize Phase 25 micro language modeling'
+          git push origin HEAD:agent/gwv1-phase25-micro-lm
+
+      - name: Explicitly dispatch micro LM smoke
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 10); do
+            if gh api --method POST \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/lm-micro-smoke.yml/dispatches" \
+              -f ref=agent/gwv1-phase25-micro-lm; then
+              exit 0
+            fi
+            sleep 3
+          done
+          exit 1
