@@ -1,0 +1,80 @@
+name: LM micro smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [agent/gwv1-phase25-micro-lm]
+
+permissions:
+  contents: read
+
+jobs:
+  corpus:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch fixed Tiny Shakespeare slice
+        run: python3 tools/fetch_lm_smoke_corpus.py --output-dir corpus
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lmv1-corpus
+          path: corpus
+          retention-days: 7
+
+  train:
+    needs: corpus
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        model: [tiny_rnn, tiny_gru, tiny_sgw]
+        context: [16, 64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: lmv1-corpus
+          path: corpus
+      - name: Configure and build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target lmv1_train -j2
+      - name: Run primary and deterministic rerun
+        shell: bash
+        run: |
+          corpus_id=$(python3 -c 'import json; print(json.load(open("corpus/corpus_manifest.json"))["frozen_sha256"])')
+          scripts/run_lmv1_phase25_unit.sh build/lmv1_train corpus/corpus_160k.bin "$corpus_id" \
+            "${{ matrix.model }}" "${{ matrix.context }}" 9000 \
+            "evidence/primary/${{ matrix.model }}-context${{ matrix.context }}"
+          scripts/run_lmv1_phase25_unit.sh build/lmv1_train corpus/corpus_160k.bin "$corpus_id" \
+            "${{ matrix.model }}" "${{ matrix.context }}" 9000 \
+            "evidence/rerun/${{ matrix.model }}-context${{ matrix.context }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lmv1-${{ matrix.model }}-context${{ matrix.context }}
+          path: evidence
+          retention-days: 14
+
+  aggregate:
+    needs: train
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: lmv1-*
+          path: evidence
+          merge-multiple: true
+      - name: Aggregate strict evidence
+        run: |
+          python3 scripts/aggregate_lmv1_phase25_smoke.py \
+            --root evidence/primary --rerun-root evidence/rerun \
+            --output-dir summary
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lmv1-phase25-summary
+          path: summary
+          retention-days: 30
